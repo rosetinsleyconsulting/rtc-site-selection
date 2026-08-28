@@ -41,7 +41,7 @@ if (process.env.NODE_ENV === 'production') {
     if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
     res.sendFile(path.join(root, 'dist', 'index.html'));
   });
-  app.listen(port, '0.0.0.0', () => console.log(`Lowlu server listening on ${port}`));
+  app.listen(port, '0.0.0.0', () => console.log(`Site selection server listening on ${port}`));
 } else {
   const vite = await createViteServer({
     root,
@@ -59,7 +59,7 @@ if (process.env.NODE_ENV === 'production') {
       next(error);
     }
   });
-  app.listen(port, '0.0.0.0', () => console.log(`Lowlu dev server listening on ${port}`));
+  app.listen(port, '0.0.0.0', () => console.log(`Site selection dev server listening on ${port}`));
 }
 
 process.on('SIGTERM', async () => {

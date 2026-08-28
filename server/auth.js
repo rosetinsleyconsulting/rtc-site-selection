@@ -1,4 +1,5 @@
 import { createClerkClient } from '@clerk/backend';
+import { getAuth } from '@clerk/express';
 import { sql } from 'drizzle-orm';
 
 const secretKey = process.env.CLERK_SECRET_KEY;
@@ -49,7 +50,7 @@ export async function requireUser(req, res, next) {
     });
   }
 
-  const userId = req.auth?.userId;
+  const { userId } = getAuth(req);
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   try {

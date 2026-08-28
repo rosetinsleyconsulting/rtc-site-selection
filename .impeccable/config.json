@@ -1,0 +1,23 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "montserrat",
+        "createdAt": "2026-08-28T14:29:36.799Z",
+        "reason": "incumbent app-wide brand typeface set at :root, used across the entire product since before this session; not part of this map-layout task's scope"
+      },
+      {
+        "rule": "codex-grid-background",
+        "value": "*",
+        "files": [
+          "index.css"
+        ],
+        "createdAt": "2026-08-28T14:29:36.854Z",
+        "reason": "the .fallback-map rule is the no-WebGL2 fallback for the map view itself (MapPanel's mapFailed state) — a literal map surface, which the rule's own carve-out exempts"
+      }
+    ]
+  }
+}

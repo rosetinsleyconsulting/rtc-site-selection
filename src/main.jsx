@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router-dom';
 import {
   ArrowRight,
   Check,
@@ -36,6 +36,8 @@ import '../index.css';
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const tileServerUrl = import.meta.env.VITE_TILE_SERVER_URL?.replace(/\/+$/, '');
+const CONTEXT_LAYER_IDS = ['context-parcels', 'context-buildings-fill', 'context-buildings-outline'];
 const numberValue = value => {
   if (value === undefined || value === null || String(value).trim() === '') return null;
   const parsed = Number(value);
@@ -70,7 +72,7 @@ async function api(path, options = {}) {
 function ConfigurationNotice() {
   return <div className="config-screen">
     <div className="config-card">
-      <div className="config-mark">Lowlu</div>
+      <div className="config-mark">Site Selection</div>
       <div className="eyebrow">Authentication setup</div>
       <h1>Connect the client login</h1>
       <p>Add <strong>VITE_CLERK_PUBLISHABLE_KEY</strong> and <strong>CLERK_SECRET_KEY</strong> as Replit Secrets, then restart the app to enable the private workspace.</p>
@@ -98,12 +100,12 @@ function AuthAppearance() {
   };
 }
 
-function AuthRoutes() {
-  return <Routes>
-    <Route path="/sign-in/*" element={<div className="auth-screen"><SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" fallbackRedirectUrl="/" appearance={AuthAppearance()} /></div>} />
-    <Route path="/sign-up/*" element={<div className="auth-screen"><SignUp routing="path" path="/sign-up" signInUrl="/sign-in" fallbackRedirectUrl="/" appearance={AuthAppearance()} /></div>} />
-    <Route path="*" element={<Navigate to="/sign-in" replace />} />
-  </Routes>;
+function SignInRoute() {
+  return <div className="auth-screen"><SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" fallbackRedirectUrl="/" appearance={AuthAppearance()} /></div>;
+}
+
+function SignUpRoute() {
+  return <div className="auth-screen"><SignUp routing="path" path="/sign-up" signInUrl="/sign-in" fallbackRedirectUrl="/" appearance={AuthAppearance()} /></div>;
 }
 
 function ProtectedRoute({ children }) {
@@ -111,18 +113,51 @@ function ProtectedRoute({ children }) {
 }
 
 function HomeRoute() {
-  return <><SignedIn><WorkspaceApp /></SignedIn><SignedOut><LandingPage /></SignedOut></>;
+  return <><SignedIn><Home /></SignedIn><SignedOut><LandingPage /></SignedOut></>;
 }
 
 function LandingPage() {
-  return <div className="landing-screen"><div className="landing-content"><div className="brand-kicker">ROSE TINSLEY Consulting</div><div className="landing-wordmark">Lowlu</div><div className="landing-rule"/><div className="eyebrow">Private London site-selection workspace</div><h1>Make the next<br/><em>place</em> worth finding.</h1><p>Review curated venues and vacant plots, share a considered shortlist, and move from map to decision with clarity.</p><div className="landing-actions"><Link to="/sign-in" className="decision accept">Sign in <ArrowRight size={13}/></Link><Link to="/sign-up" className="landing-secondary">Create an account</Link></div></div><div className="landing-aside"><div className="landing-coordinate">51°30′N<br/>0°07′W</div><div className="landing-note">A private tool for<br/>thoughtful site selection.</div></div></div>;
+  return <div className="landing-screen"><div className="landing-content"><div className="brand-kicker">ROSE TINSLEY Consulting</div><div className="landing-wordmark">Site Selection</div><div className="landing-rule"/><div className="eyebrow">Private client site-selection workspace</div><h1>Make the next<br/><em>place</em> worth finding.</h1><p>Review curated venues and vacant plots, share a considered shortlist, and move from map to decision with clarity.</p><div className="landing-actions"><Link to="/sign-in" className="decision accept">Sign in <ArrowRight size={13}/></Link><Link to="/sign-up" className="landing-secondary">Create an account</Link></div></div><div className="landing-aside"><div className="landing-coordinate">One shortlist.<br/>Every client.</div><div className="landing-note">A private tool for<br/>thoughtful site selection.</div></div></div>;
 }
 
 function AdminRoute() {
-  return <ProtectedRoute><AdminPage /></ProtectedRoute>;
+  return <ProtectedRoute><AdminOverview /></ProtectedRoute>;
 }
 
-function WorkspaceApp() {
+function WorkspaceRoute() {
+  const { workspaceId } = useParams();
+  const [profile, setProfile] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const loadProfile = async () => {
+    setLoading(true);
+    try {
+      setProfile(await api('/api/me'));
+    } catch (loadError) {
+      setError(loadError.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadProfile(); }, []);
+
+  if (loading) return <LoadingScreen label="Loading workspace" />;
+  if (error) return <ErrorScreen message={error} onRetry={loadProfile} />;
+  const workspace = profile.workspaces.find(item => item.id === Number(workspaceId));
+  if (!workspace) return <NoAccessState />;
+
+  return <ShortlistWorkspace
+    key={workspace.id}
+    profile={profile}
+    workspaces={[workspace]}
+    workspace={workspace}
+    onWorkspaceChange={() => {}}
+  />;
+}
+
+function Home() {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -147,9 +182,10 @@ function WorkspaceApp() {
     if (workspaceId) localStorage.setItem('lowlu-workspace-id', String(workspaceId));
   }, [workspaceId]);
 
-  if (loading) return <LoadingScreen label="Loading your workspaces" />;
+  if (loading) return <LoadingScreen label="Loading your workspace" />;
   if (error) return <ErrorScreen message={error} onRetry={loadProfile} />;
-  if (!profile?.workspaces?.length) return <NoAccessState isAdmin={profile?.isPlatformAdmin} />;
+  if (profile.isPlatformAdmin) return <AdminOverview profile={profile} />;
+  if (!profile.workspaces.length) return <NoAccessState />;
 
   const activeWorkspace = profile.workspaces.find(workspace => workspace.id === workspaceId) || profile.workspaces[0];
   return <ShortlistWorkspace
@@ -169,8 +205,8 @@ function ErrorScreen({ message, onRetry }) {
   return <div className="center-screen"><div className="center-card"><div className="eyebrow">Workspace unavailable</div><h1>We couldn’t load this view.</h1><p>{message}</p><button className="decision accept" onClick={onRetry}>Try again</button></div></div>;
 }
 
-function NoAccessState({ isAdmin }) {
-  return <div className="center-screen"><div className="center-card"><div className="eyebrow">Private shortlist workspace</div><h1>No workspace access yet.</h1><p>Your account is active, but an administrator has not granted access to a client workspace.</p>{isAdmin && <Link className="decision accept inline-link" to="/admin">Open admin tools <ArrowRight size={13}/></Link>}<div className="center-signature">ROSE TINSLEY Consulting</div></div></div>;
+function NoAccessState() {
+  return <div className="center-screen"><div className="center-card"><div className="eyebrow">Private shortlist workspace</div><h1>No workspace access yet.</h1><p>Your account is active, but an administrator has not granted access to a client workspace.</p><div className="center-signature">ROSE TINSLEY Consulting</div></div></div>;
 }
 
 function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange }) {
@@ -243,8 +279,8 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
     <aside className={`sidebar ${mobileMenu ? 'mobile-open' : ''}`}>
       <div className="mobile-sidebar-close"><button onClick={() => setMobileMenu(false)} aria-label="Close menu"><X size={18}/></button></div>
       <div className="brand-kicker">Private shortlist workspace</div>
-      <div className="brand-name">Lowlu</div>
-      <div className="brand-sub">London site selection</div>
+      <div className="brand-name">Site Selection</div>
+      <div className="brand-sub">Client map workspace</div>
       <div className="side-rule" />
       <div className="side-label">Client workspace</div>
       {workspaces.length > 1 ? <select className="filter-select workspace-select" value={workspace.id} onChange={event => onWorkspaceChange(Number(event.target.value))}>{workspaces.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select> : <div className="workspace-name">{workspace.name}</div>}
@@ -262,25 +298,31 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
         <div className="side-label">Site category</div>
         <select className="filter-select" value={category} onChange={event => setCategory(event.target.value)}><option>All categories</option>{categories.map(item => <option key={item}>{item}</option>)}</select>
       </div>
-      <div className="side-footer"><div className="signature">Prepared for {workspace.name}<br/>ROSE TINSLEY Consulting</div><div className="side-account"><UserButton afterSignOutUrl="/sign-in"/></div>{profile.isPlatformAdmin && <Link className="admin-link" to="/admin"><ShieldCheck size={13}/> Admin tools</Link>}</div>
+      <div className="side-footer"><div className="signature">Prepared for {workspace.name}<br/>ROSE TINSLEY Consulting</div><div className="side-account"><UserButton afterSignOutUrl="/sign-in"/></div>{profile.isPlatformAdmin && <Link className="admin-link" to="/admin"><ShieldCheck size={13}/> Back to admin overview</Link>}</div>
     </aside>
     <main className="main">
-      <header className="topline">
+      <header className="topbar">
         <button className="mobile-menu-button" onClick={() => setMobileMenu(true)} aria-label="Open menu"><Menu size={20}/></button>
-        <div><div className="eyebrow">{workspace.name} / candidate sites</div><h1>Shortlist review</h1><p className="intro">A considered view of places worth a closer look.</p></div>
-        <div className="view-switch">
-          <button className={view === 'split' ? 'active' : ''} onClick={() => setView('split')}><MapPin size={13}/> Split view</button>
-          <button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><List size={13}/> List</button>
-          <button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}><Map size={13}/> Map</button>
+        <div className="topbar-title">
+          <h1>{workspace.name}</h1>
+          <div className="topbar-stats">
+            <span><strong>{counts.all}</strong> sites</span>
+            <span><strong>{counts.accepted}</strong> accepted</span>
+            <span><strong>{counts.new}</strong> to review</span>
+          </div>
+        </div>
+        <div className="topline-actions">
+          {profile.isPlatformAdmin && <Link to="/admin" className="back-to-admin"><ShieldCheck size={13}/> Admin overview</Link>}
+          <div className="view-switch">
+            <button className={view === 'split' ? 'active' : ''} onClick={() => setView('split')}><MapPin size={13}/> Split view</button>
+            <button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><List size={13}/> List</button>
+            <button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}><Map size={13}/> Map</button>
+          </div>
         </div>
       </header>
-      <div className="summary-row">
-        <div className="summary-item"><span className="summary-number">{counts.all}</span><span className="summary-caption">sites in shortlist</span></div>
-        <div className="summary-item"><span className="summary-number">{counts.accepted}</span><span className="summary-caption">accepted</span></div>
-        <div className="summary-item"><span className="summary-number">{counts.new}</span><span className="summary-caption">to review</span></div>
-      </div>
       <div className={`workspace ${view === 'list' ? 'list-only' : view === 'map' ? 'map-only' : 'split'}`}>
         {view !== 'map' && <section className="list-panel">
+          {view === 'split' && selected && <Detail site={selected} onStatus={setStatus}/>}
           <div className="search-row"><div className="search-wrap"><Search size={15}/><input className="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search site, borough or category" /></div></div>
           <div className="result-note">{filtered.length} {filtered.length === 1 ? 'site' : 'sites'} shown</div>
           <div className="site-list">{filtered.length ? filtered.map(site => <button className={`site-card ${selected?.id === site.id ? 'selected' : ''}`} key={site.id} onClick={() => setSelectedId(site.id)}>
@@ -289,8 +331,12 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
             <div className="card-bottom"><span><strong>{area(site.footprint_m2)}</strong> footprint</span><span><strong>{area(site.spare_land_on_title_m2)}</strong> spare title</span></div>
           </button>) : <div className="empty"><h2>No sites match</h2><p>Try clearing a filter or searching a different part of the shortlist.</p></div>}</div>
         </section>}
-        {view !== 'list' && <MapPanel sites={filtered} selected={selected} onSelect={setSelectedId}/>}
-        {view !== 'map' && selected && <Detail site={selected} onStatus={setStatus}/>}
+        {view === 'map'
+          ? <MapPanel sites={filtered} selected={selected} onSelect={setSelectedId}/>
+          : <div className="map-column">
+              {view !== 'list' && <MapPanel sites={filtered} selected={selected} onSelect={setSelectedId}/>}
+              {view === 'list' && selected && <Detail site={selected} onStatus={setStatus}/>}
+            </div>}
       </div>
     </main>
   </div>;
@@ -301,6 +347,7 @@ function MapPanel({ sites, selected, onSelect }) {
   const mapRef = useRef(null);
   const onSelectRef = useRef(onSelect);
   const [mapFailed, setMapFailed] = useState(false);
+  const [contextLayerOn, setContextLayerOn] = useState(Boolean(tileServerUrl));
   onSelectRef.current = onSelect;
   const geoJson = useMemo(() => ({
     type: 'FeatureCollection',
@@ -345,6 +392,14 @@ function MapPanel({ sites, selected, onSelect }) {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.on('load', () => {
+      if (tileServerUrl) {
+        const contextVisibility = contextLayerOn ? 'visible' : 'none';
+        map.addSource('lowlu-parcels', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_parcels/{z}/{x}/{y}`] });
+        map.addLayer({ id: 'context-parcels', type: 'line', source: 'lowlu-parcels', 'source-layer': 'lowlu_final_parcels', layout: { visibility: contextVisibility }, paint: { 'line-color': '#748894', 'line-width': 1, 'line-opacity': 0.55 } });
+        map.addSource('lowlu-buildings', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_buildings/{z}/{x}/{y}`] });
+        map.addLayer({ id: 'context-buildings-fill', type: 'fill', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', layout: { visibility: contextVisibility }, paint: { 'fill-color': '#6F8443', 'fill-opacity': 0.5 } });
+        map.addLayer({ id: 'context-buildings-outline', type: 'line', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', layout: { visibility: contextVisibility }, paint: { 'line-color': '#454E3A', 'line-width': 1 } });
+      }
       map.addSource('sites', { type: 'geojson', data: geoJson });
       map.addLayer({ id: 'site-points', type: 'circle', source: 'sites', paint: {
         'circle-radius': ['case', ['get', 'selected'], 10, 7],
@@ -369,14 +424,26 @@ function MapPanel({ sites, selected, onSelect }) {
     if (map.loaded()) update(); else map.once('load', update);
   }, [geoJson]);
   useEffect(() => {
-    if (mapRef.current && selected) mapRef.current.easeTo({ center: [Number(selected.lon), Number(selected.lat)], duration: 650, essential: true });
+    const map = mapRef.current;
+    if (!map || !tileServerUrl) return;
+    const applyVisibility = () => CONTEXT_LAYER_IDS.forEach(id => {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', contextLayerOn ? 'visible' : 'none');
+    });
+    if (map.loaded()) applyVisibility(); else map.once('load', applyVisibility);
+  }, [contextLayerOn]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !selected) return;
+    map.easeTo({ center: [Number(selected.lon), Number(selected.lat)], zoom: Math.max(map.getZoom(), 15), duration: 650, essential: true });
   }, [selected?.id]);
 
   return <section className="map-panel">
     <div ref={containerRef} className="map-canvas" aria-label="Map of shortlisted sites" />
     {mapFailed && <div className="fallback-map" aria-label="Coordinate map of shortlisted sites"><div className="fallback-river" /><span className="fallback-place place-north">North London</span><span className="fallback-place place-west">West London</span><span className="fallback-place place-central">Central London</span>{fallbackPoints.map(site => <button aria-label={site.site_name} title={site.site_name} key={site.id} className={`fallback-point ${site.status} ${selected?.id === site.id ? 'selected' : ''}`} style={{ left: site.left, top: site.top }} onClick={() => onSelect(site.id)} />)}<div className="fallback-note">Interactive coordinate view · live basemap available with WebGL2</div></div>}
     <div className="map-head"><span className="map-chip">Site geography · live map</span><span className="map-chip">{sites.length} points</span></div>
-    <div className="context-layer" title="Galahad endpoint required before this layer can be enabled"><Layers3 size={13}/><span>Parcels & buildings</span><span className="coming-soon">Awaiting connection</span></div>
+    {tileServerUrl
+      ? <button type="button" className={`context-layer ${contextLayerOn ? 'active' : ''}`} aria-pressed={contextLayerOn} onClick={() => setContextLayerOn(on => !on)}><Layers3 size={13}/><span>Parcels & buildings</span></button>
+      : <div className="context-layer" title="Tile server endpoint required before this layer can be enabled"><Layers3 size={13}/><span>Parcels & buildings</span><span className="coming-soon">Awaiting connection</span></div>}
     <div className="map-legend"><span><i className="legend-dot" style={{ background: 'var(--rose)' }}/> New</span><span><i className="legend-dot" style={{ background: 'var(--teal)' }}/> Accepted</span><span><i className="legend-dot" style={{ background: '#9d9d91' }}/> Dismissed</span></div>
   </section>;
 }
@@ -384,18 +451,32 @@ function MapPanel({ sites, selected, onSelect }) {
 function Detail({ site, onStatus }) {
   const confidence = site.voa_match_confidence && site.voa_match_confidence !== 'no match' ? 78 : 22;
   const siteQuery = encodeURIComponent(`${site.site_name}, ${site.borough}, London`);
-  return <section className="detail-panel"><div className="detail-head"><div className="detail-type">{site.type} · {site.priority}</div><h2 className="detail-title">{site.site_name}</h2><div className="detail-location">{site.borough}, London</div><div className="decision-row"><button className={`decision ${site.status === 'accepted' ? 'accept' : ''}`} onClick={() => onStatus(site.id, site.status === 'accepted' ? 'new' : 'accepted')}>{site.status === 'accepted' ? <Check size={12}/> : null} {site.status === 'accepted' ? 'Accepted' : 'Accept site'}</button><button className="decision dismiss" onClick={() => onStatus(site.id, site.status === 'dismissed' ? 'new' : 'dismissed')}>{site.status === 'dismissed' ? <RotateCcw size={12}/> : <X size={12}/>} {site.status === 'dismissed' ? 'Restore' : 'Dismiss'}</button></div></div>
+  return <section className="detail-panel"><div className="detail-head">
+      <div className="detail-head-top">
+        <div className="detail-type">{site.type} · {site.priority}</div>
+        <div className="decision-row"><button className={`decision ${site.status === 'accepted' ? 'accept' : ''}`} onClick={() => onStatus(site.id, site.status === 'accepted' ? 'new' : 'accepted')}>{site.status === 'accepted' ? <Check size={12}/> : null} {site.status === 'accepted' ? 'Accepted' : 'Accept site'}</button><button className="decision dismiss" onClick={() => onStatus(site.id, site.status === 'dismissed' ? 'new' : 'dismissed')}>{site.status === 'dismissed' ? <RotateCcw size={12}/> : <X size={12}/>} {site.status === 'dismissed' ? 'Restore' : 'Dismiss'}</button></div>
+      </div>
+      <div className="detail-head-title-row">
+        <h2 className="detail-title">{site.site_name}</h2>
+        <div className="detail-head-meta">
+          <span className="detail-location">{site.borough}, London</span>
+          <div className="research-links"><a href={`https://www.google.com/maps/search/?api=1&query=${siteQuery}`} target="_blank" rel="noreferrer">Google Maps <ExternalLink size={12}/></a><a href={`https://www.google.com/search?q=${siteQuery}+official+website`} target="_blank" rel="noreferrer">Find website <ExternalLink size={12}/></a><a href="https://search-property-information.service.gov.uk/search/search-by-address" target="_blank" rel="noreferrer">HM Land Registry <ExternalLink size={12}/></a></div>
+        </div>
+      </div>
+    </div>
     <div className="detail-body"><div className="detail-grid"><div className="detail-stat"><label>Footprint</label><span>{area(site.footprint_m2)}</span></div><div className="detail-stat"><label>Spare land on title</label><span>{area(site.spare_land_on_title_m2)}</span></div><div className="detail-stat"><label>VOA rateable value</label><span>{money(site.voa_rateable_value)}</span></div><div className="detail-stat"><label>Nearby parking</label><span>{site.nearby_parking || 'Not recorded'}</span></div></div>
-      <div className="research-links"><a href={`https://www.google.com/maps/search/?api=1&query=${siteQuery}`} target="_blank" rel="noreferrer">Google Maps <ExternalLink size={12}/></a><a href={`https://www.google.com/search?q=${siteQuery}+official+website`} target="_blank" rel="noreferrer">Find website <ExternalLink size={12}/></a><a href="https://search-property-information.service.gov.uk/search/search-by-address" target="_blank" rel="noreferrer">HM Land Registry <ExternalLink size={12}/></a></div>
-      <div className="detail-section"><h3>VOA match confidence</h3><p>{site.voa_match_confidence || 'No match recorded'}</p><div className="confidence"><i style={{ width: `${confidence}%` }}/></div></div>
-      <div className="detail-section"><h3>Planning context</h3><p>{site.nearby_planning_applications || 'No planning information recorded.'}</p></div>
+      <div className="detail-section detail-flag-row">
+        <div className="detail-flag"><h3>VOA match confidence</h3><p>{site.voa_match_confidence || 'No match recorded'}</p><div className="confidence"><i style={{ width: `${confidence}%` }}/></div></div>
+        <div className="detail-flag"><h3>Planning context</h3><p>{site.nearby_planning_applications || 'No planning information recorded.'}</p></div>
+      </div>
       {(site.data_confidence_notes || site.spare_area_comments) && <div className="detail-section"><h3>Field notes</h3><p>{site.data_confidence_notes || site.spare_area_comments}</p>{site.data_confidence_notes && site.spare_area_comments && <p style={{ marginTop: 8 }}>{site.spare_area_comments}</p>}</div>}
     </div></section>;
 }
 
-function AdminPage() {
+function AdminOverview() {
   const [workspaces, setWorkspaces] = useState([]);
   const [users, setUsers] = useState([]);
+  const [section, setSection] = useState('clients');
   const [form, setForm] = useState({ name: '', slug: '', csvText: '' });
   const [inviteEmail, setInviteEmail] = useState('');
   const [fileName, setFileName] = useState('');
@@ -403,6 +484,7 @@ function AdminPage() {
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [mobileMenu, setMobileMenu] = useState(false);
 
   const loadAdminData = async () => {
     setLoading(true);
@@ -466,17 +548,37 @@ function AdminPage() {
     reader.readAsText(file);
   };
 
-  if (loading) return <LoadingScreen label="Loading admin tools" />;
+  if (loading) return <LoadingScreen label="Loading admin overview" />;
   if (error && !workspaces.length && !users.length) return <ErrorScreen message={error} onRetry={loadAdminData} />;
-  return <div className="admin-shell">
-    <header className="admin-header"><div><div className="brand-kicker">ROSE TINSLEY Consulting</div><h1>Platform admin</h1><p>Control client workspaces, shortlist data, and account access.</p></div><div className="admin-header-actions"><Link to="/" className="quiet-link"><MapPin size={14}/> Return to shortlist</Link><UserButton afterSignOutUrl="/sign-in"/></div></header>
-    {(notice || error) && <div className={`admin-notice ${error ? 'is-error' : ''}`}>{error || notice}<button onClick={() => { setNotice(''); setError(''); }} aria-label="Dismiss notification"><X size={14}/></button></div>}
-    <div className="admin-grid">
-      <section className="admin-card create-card"><div className="admin-card-kicker">New client</div><h2>Create a workspace</h2><p>Import a separate site shortlist for a client. Their data will be isolated from every other workspace.</p><form onSubmit={createWorkspace}><label>Workspace name<input required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Example: Lowlu"/></label><label>Workspace slug<input required value={form.slug} onChange={event => setForm({ ...form, slug: event.target.value })} placeholder="lowlu"/></label><label>Site shortlist CSV<textarea required value={form.csvText} onChange={event => setForm({ ...form, csvText: event.target.value })} placeholder="Paste the CSV export here, or upload it below." rows={6}/></label><label className="file-input">Upload CSV<input type="file" accept=".csv,text/csv" onChange={readFile}/><span>{fileName || 'Choose a file'}</span></label><button className="decision accept" disabled={busy === 'workspace'}>{busy === 'workspace' ? <LoaderCircle className="spin" size={13}/> : <ArrowRight size={13}/>} Create workspace</button></form></section>
-      <section className="admin-card"><div className="admin-card-kicker">Client workspaces</div><h2>{workspaces.length} workspaces</h2><div className="workspace-table">{workspaces.map(workspace => <div className="workspace-row" key={workspace.id}><div><strong>{workspace.name}</strong><span>/{workspace.slug}</span></div><div className="row-metrics"><span>{workspace.site_count} sites</span><span>{workspace.member_count} members</span></div></div>)}{!workspaces.length && <div className="admin-empty">Create the first workspace to begin.</div>}</div></section>
-      <section className="admin-card invite-card"><div className="admin-card-kicker">Access</div><h2>Invite a user</h2><p>Send a Clerk invitation that routes through the dedicated sign-up page.</p><form onSubmit={invite} className="invite-form"><input required type="email" value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} placeholder="name@company.com"/><button className="decision accept" disabled={busy === 'invite'}>{busy === 'invite' ? <LoaderCircle className="spin" size={13}/> : <Users size={13}/>} Send invite</button></form></section>
-      <section className="admin-card users-card"><div className="admin-card-kicker">People</div><h2>{users.length} local users</h2><div className="users-list">{users.map(user => <UserRow key={user.id} user={user} workspaces={workspaces} busy={busy} onToggleAdmin={isPlatformAdmin => updateUser(user.id, { isPlatformAdmin }, `${user.email} admin access updated.`)} onToggleMembership={toggleMembership}/>) }{!users.length && <div className="admin-empty">Users appear here after their first authenticated request.</div>}</div></section>
-    </div>
+
+  return <div className="app-shell">
+    <aside className={`sidebar ${mobileMenu ? 'mobile-open' : ''}`}>
+      <div className="mobile-sidebar-close"><button onClick={() => setMobileMenu(false)} aria-label="Close menu"><X size={18}/></button></div>
+      <div className="brand-kicker">Platform admin</div>
+      <div className="brand-name">Site Selection</div>
+      <div className="brand-sub">Admin overview</div>
+      <div className="side-rule" />
+      <div className="side-label">Manage</div>
+      <nav className="side-nav">
+        <button className={section === 'clients' ? 'active' : ''} onClick={() => { setSection('clients'); setMobileMenu(false); }}><span>Client workspaces</span><span className="side-count">{workspaces.length}</span></button>
+        <button className={section === 'people' ? 'active' : ''} onClick={() => { setSection('people'); setMobileMenu(false); }}><span>People &amp; access</span><span className="side-count">{users.length}</span></button>
+      </nav>
+      <div className="side-footer"><div className="signature">ROSE TINSLEY Consulting<br/>Platform overview</div><div className="side-account"><UserButton afterSignOutUrl="/sign-in"/></div></div>
+    </aside>
+    <main className="main">
+      <header className="topline">
+        <button className="mobile-menu-button" onClick={() => setMobileMenu(true)} aria-label="Open menu"><Menu size={20}/></button>
+        <div><div className="eyebrow">Platform admin</div><h1>{section === 'clients' ? 'Client workspaces' : 'People & access'}</h1><p className="intro">{section === 'clients' ? 'Create isolated client workspaces and open their shortlist.' : 'Invite users and control who can see each workspace.'}</p></div>
+      </header>
+      {(notice || error) && <div className={`admin-notice ${error ? 'is-error' : ''}`}>{error || notice}<button onClick={() => { setNotice(''); setError(''); }} aria-label="Dismiss notification"><X size={14}/></button></div>}
+      {section === 'clients' ? <div className="admin-grid">
+        <section className="admin-card create-card"><div className="admin-card-kicker">New client</div><h2>Create a workspace</h2><p>Import a separate site shortlist for a client. Their data will be isolated from every other workspace.</p><form onSubmit={createWorkspace}><label>Workspace name<input required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Example: Acme Property Group"/></label><label>Workspace slug<input required value={form.slug} onChange={event => setForm({ ...form, slug: event.target.value })} placeholder="acme-property-group"/></label><label>Site shortlist CSV<textarea required value={form.csvText} onChange={event => setForm({ ...form, csvText: event.target.value })} placeholder="Paste the CSV export here, or upload it below." rows={6}/></label><label className="file-input">Upload CSV<input type="file" accept=".csv,text/csv" onChange={readFile}/><span>{fileName || 'Choose a file'}</span></label><button className="decision accept" disabled={busy === 'workspace'}>{busy === 'workspace' ? <LoaderCircle className="spin" size={13}/> : <ArrowRight size={13}/>} Create workspace</button></form></section>
+        <section className="admin-card"><div className="admin-card-kicker">Client workspaces</div><h2>{workspaces.length} workspaces</h2><div className="workspace-table">{workspaces.map(workspace => <div className="workspace-row" key={workspace.id}><div><strong>{workspace.name}</strong><span>/{workspace.slug}</span></div><div className="row-metrics"><span>{workspace.site_count} sites</span><span>{workspace.member_count} members</span><Link className="quiet-link" to={`/workspace/${workspace.id}`}>View shortlist <ArrowRight size={12}/></Link></div></div>)}{!workspaces.length && <div className="admin-empty">Create the first workspace to begin.</div>}</div></section>
+      </div> : <div className="admin-grid">
+        <section className="admin-card invite-card"><div className="admin-card-kicker">Access</div><h2>Invite a user</h2><p>Send a Clerk invitation that routes through the dedicated sign-up page.</p><form onSubmit={invite} className="invite-form"><input required type="email" value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} placeholder="name@company.com"/><button className="decision accept" disabled={busy === 'invite'}>{busy === 'invite' ? <LoaderCircle className="spin" size={13}/> : <Users size={13}/>} Send invite</button></form></section>
+        <section className="admin-card users-card"><div className="admin-card-kicker">People</div><h2>{users.length} local users</h2><div className="users-list">{users.map(user => <UserRow key={user.id} user={user} workspaces={workspaces} busy={busy} onToggleAdmin={isPlatformAdmin => updateUser(user.id, { isPlatformAdmin }, `${user.email} admin access updated.`)} onToggleMembership={toggleMembership}/>) }{!users.length && <div className="admin-empty">Users appear here after their first authenticated request.</div>}</div></section>
+      </div>}
+    </main>
   </div>;
 }
 
@@ -490,7 +592,7 @@ function PlusIcon() {
 
 function App() {
   if (!clerkPublishableKey) return <ConfigurationNotice />;
-  return <ClerkProvider publishableKey={clerkPublishableKey} proxyUrl={import.meta.env.VITE_CLERK_PROXY_URL} appearance={AuthAppearance()}><BrowserRouter><Routes><Route path="/sign-in/*" element={<AuthRoutes/>}/><Route path="/sign-up/*" element={<AuthRoutes/>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="*" element={<HomeRoute/>}/></Routes></BrowserRouter></ClerkProvider>;
+  return <ClerkProvider publishableKey={clerkPublishableKey} proxyUrl={import.meta.env.VITE_CLERK_PROXY_URL} appearance={AuthAppearance()}><BrowserRouter><Routes><Route path="/sign-in/*" element={<SignInRoute/>}/><Route path="/sign-up/*" element={<SignUpRoute/>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="/workspace/:workspaceId" element={<ProtectedRoute><WorkspaceRoute/></ProtectedRoute>}/><Route path="*" element={<HomeRoute/>}/></Routes></BrowserRouter></ClerkProvider>;
 }
 
 createRoot(document.getElementById('root')).render(<App />);

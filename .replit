@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "postgresql-16"]
 
 [nix]
 channel = "stable-25_05"
@@ -30,3 +30,7 @@ outputType = "webview"
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[deployment]
+build = ["npm", "run", "build"]
+run = ["npm", "run", "start"]

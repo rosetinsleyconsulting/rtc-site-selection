@@ -1,0 +1,97 @@
+## Project
+
+Build a standalone site-selection tool for a client called Lowlu. It's a trimmed-down version of an existing project (the padel map app) — same architecture pattern, much smaller feature set. This is a new, separate Replit app, not an addition to an existing multi-client portal.
+
+## Stack (carry forward from prior project, assume this shape unless told otherwise)
+
+- pnpm-workspace monorepo
+- Express API + Vite/React client
+- Deployed on Replit as two services under one origin: API on `/api`, static client on `/`, fronted by Google Cloud Run
+- Auth via Clerk
+- Database via Supabase (this project also needs a read connection to a separate external PostGIS database — see Data below)
+
+## Branding
+
+Match RTC's brand identity — this tool should look like it belongs alongside RTC's own client portal, not like a generic dashboard template.
+
+**Colours**
+- Charcoal Slate `#2D2D2A` — dark neutral, use for dark surfaces/sidebar and primary text
+- Deep Forest `#454E3A` — headings, primary brand accent
+- Moss Green `#6F8443` — secondary accent, links, active states
+- Mist Neutral `#DBDFD1` — light borders, dividers, muted backgrounds
+- Cream Parchment `#FEFFF8` — main background
+
+Data/map layer palette (use these for map symbology, categories, status colours — not for UI chrome):
+- Primary: Dusty Rose `#A67C7C`, Slate Blue `#5E7A8C`, Brand Moss `#6F8443`, Golden Rye `#C4A35D`
+- Secondary: Verdigris Teal `#517C78`, Muted Heather `#847C96`, Desert Sage `#93A392`, Burnt Ochre `#B58B5F`
+
+**Typography**
+- Headings: "Yeseva One" (serif, Google Fonts), regular weight
+- Body/UI text: "Montserrat" (Google Fonts), regular and bold weights
+- Load both via `https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,700;1,400&family=Yeseva+One&display=swap`
+
+**Tone**: quiet, confident, understated — not flashy or high-contrast SaaS-dashboard styling. Generous whitespace, muted palette, serif headings against sans-serif body text.
+
+If you have access to the actual client portal's Tailwind config or CSS design tokens, share that file directly instead of/alongside this section — it'll give an exact match rather than a close approximation from the brand guideline doc.
+
+## What the tool does
+
+A client-facing tool showing a shortlist of candidate sites (venues and vacant plots) on a map, with per-site detail and a simple accept/dismiss workflow. Think "curated map + lightweight CRM pipeline," not a general GIS tool.
+
+### Core features
+
+1. **Map view** — MapLibre GL map showing shortlisted sites as points.
+2. **Spatial context layer** — parcel boundaries and building footprints rendered as vector tiles (MVT), toggleable on/off, so a user can see the actual site boundary and what's around it, not just a pin. Tiles served from a PostGIS database (Galahad) via a tile server (Martin or pg_tileserv) — confirm with me how that's exposed before assuming a URL, it may be behind a tunnel.
+3. **Site detail panel** — on clicking a site, show: address, key data fields (to be loaded from a CSV/export I'll provide), a link to the site's website, a link to its Google Maps entry, an RTC-assigned confidence flag, and a link to search HM Land Registry for the title (pre-filled with postcode/address in the query string if the search tool's URL supports it — this is a "take the user most of the way there" link, not a direct per-title deep link, since HMLR doesn't expose those).
+4. **Pipeline workflow** — each site has a status: `new`, `accepted`, `dismissed`. Build a simple list view per status with accept/dismiss actions. Start with a list, not a kanban board — keep this simple.
+5. **Auth** — single client login via Clerk (Lowlu's team), no public access.
+
+### Data
+
+- Initial site data comes from a CSV export (venue shortlist + vacant plots) — I'll provide this, load it as seed data.
+- Parcel/building layer and any live data comes from a PostGIS database on a separate server (referred to as "Galahad") — I'll provide connection details as a secret, don't hardcode.
+- Don't assume Supabase holds the parcel/building data — that lives in the external PostGIS database, Supabase is just for app data (users, site status, etc.) unless I say otherwise.
+
+## Known gotchas from the prior project — apply these preemptively, don't wait to hit them
+
+**Clerk auth**
+- Invite/ticket links only work if they land on a route that actually renders Clerk (e.g. `/sign-up`), never a landing/marketing page — a ticket sent to `/` silently drops with no error.
+- If proxying Clerk's Frontend API (e.g. `/api/__clerk/*`), double check invite/ticket URLs resolve to that proxied path, not a bare `/v1/tickets/accept`.
+- Don't assume auto-link between Clerk users and the app's own user table works just because it's in the code — test end to end with a real invite.
+- Guard "create user if not exists" against race conditions (existence check + retry), not just try/catch on insert, since parallel first-load requests can hit it simultaneously.
+
+**Database schema**
+- If any table has a `user_id` column that's a PK/FK into an old auth system, that FK constraint means new auto-link inserts need a real backing row first (find-or-create), not just a bare provider user id.
+- Add rollback/cleanup logic for any linking row created as a side effect of a failed insert — don't leave orphans.
+- Paginate fully on any admin-side user listing call (e.g. Supabase `auth.admin.listUsers`) — don't cap at the default page size.
+
+**MapLibre GL production build**
+- MapLibre's Web Worker isn't bundled by Vite by default — it resolves via `new URL(...)` at runtime, which works in dev but silently fails in production (map renders, `fitBounds()` works, but no vector/GeoJSON data draws, zero console errors).
+- Fix needs both: explicitly import the worker with Vite's `?url` suffix and call `maplibregl.setWorkerUrl(...)` before creating any Map instance, AND a `writeBundle` plugin in `vite.config.ts` to copy the worker's shared chunk (`maplibre-gl-shared.mjs`) into the build output under its exact unhashed filename.
+- Verify by checking the actual `dist/public/assets/` output for both files, not just "no console error."
+- General principle: any library that lazily loads a worker/wasm/worklet at its own runtime is a candidate for this exact silent prod-only failure.
+
+**API caching**
+- Every authenticated GET route returning per-user/per-workspace JSON needs `res.set("Cache-Control", "private, no-store")` server-side and `cache: 'no-store'` on the client fetch. Express's default `res.json()` auto-ETags, which combined with a plain `fetch()` can cause a 304 that a naive fetch wrapper treats as "no content" — private data silently disappears with no error.
+- Check this per route, not just once — a sibling endpoint can be missed.
+
+**Replit deploy semantics**
+- "Publish" ships a real git commit of current state. Confirm `git status` is clean and `git log -1` is the intended commit before publishing.
+- To verify a live bug without browser access: `curl -s -D - -o /dev/null <url>` against production gives real headers, useful for confirming a deployed bundle postdates a fix.
+- Don't trust bundle hash comparisons as a "is my fix live" signal — bundler non-determinism can hash identical source differently. Grep the deployed bundle for a string literal unique to the fix instead.
+
+**Debugging approach**
+- If something looks broken with zero console errors and no failed requests, suspect either a caching/304 issue silently nulling a response, or a bundler asset-emission gap for something loaded dynamically by a third-party library. Both look identical ("works in dev, broken in prod, no errors") but have different root causes — check network traces and actual build output, don't guess from symptoms.
+
+## Explicitly out of scope for this build
+
+- No general-purpose GIS tooling (drawing, measuring, custom queries) — this is a curated shortlist viewer, not a map editor.
+- No automated title purchase flow — link only.
+- No multi-client support — this app is Lowlu-only.
+
+## First steps
+
+1. Scaffold the monorepo per the stack above.
+2. Set up Clerk auth with a single client login, following the gotchas above from day one.
+3. Get the map rendering with the MapLibre production-build fix in place before declaring the map "done."
+4. Ask me for the CSV seed data and Galahad connection details before building the parcel/building layer.

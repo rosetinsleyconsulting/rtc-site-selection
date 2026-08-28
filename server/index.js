@@ -5,7 +5,7 @@ import { createServer as createViteServer } from 'vite';
 import { db, pool } from './db/index.js';
 import { clerkMiddleware } from '@clerk/express';
 import apiRouter from './routes/api.js';
-import { clerkConfigured, clerkClient } from './auth.js';
+import { clerkConfigured, clerkClient, publishableKey } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -16,7 +16,11 @@ app.locals.db = db;
 app.use(express.json({ limit: '12mb' }));
 
 if (clerkConfigured) {
-  app.use(clerkMiddleware({ clerkClient }));
+  app.use(clerkMiddleware({
+    clerkClient,
+    secretKey: process.env.CLERK_SECRET_KEY,
+    publishableKey,
+  }));
 } else {
   console.warn('Clerk is not configured. Add CLERK_SECRET_KEY and VITE_CLERK_PUBLISHABLE_KEY before using protected routes.');
 }
@@ -41,7 +45,7 @@ if (process.env.NODE_ENV === 'production') {
 } else {
   const vite = await createViteServer({
     root,
-    server: { middlewareMode: true, hmr: { port: 5000 } },
+    server: { middlewareMode: true },
     appType: 'spa',
   });
   app.use(vite.middlewares);

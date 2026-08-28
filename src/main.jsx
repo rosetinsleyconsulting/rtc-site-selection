@@ -100,8 +100,8 @@ function AuthAppearance() {
 
 function AuthRoutes() {
   return <Routes>
-    <Route path="/sign-in/*" element={<div className="auth-screen"><SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" afterSignInUrl="/" appearance={AuthAppearance()} /></div>} />
-    <Route path="/sign-up/*" element={<div className="auth-screen"><SignUp routing="path" path="/sign-up" signInUrl="/sign-in" afterSignUpUrl="/" appearance={AuthAppearance()} /></div>} />
+    <Route path="/sign-in/*" element={<div className="auth-screen"><SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" fallbackRedirectUrl="/" appearance={AuthAppearance()} /></div>} />
+    <Route path="/sign-up/*" element={<div className="auth-screen"><SignUp routing="path" path="/sign-up" signInUrl="/sign-in" fallbackRedirectUrl="/" appearance={AuthAppearance()} /></div>} />
     <Route path="*" element={<Navigate to="/sign-in" replace />} />
   </Routes>;
 }
@@ -110,8 +110,12 @@ function ProtectedRoute({ children }) {
   return <><SignedIn>{children}</SignedIn><SignedOut><RedirectToSignIn /></SignedOut></>;
 }
 
-function AppRoute() {
-  return <ProtectedRoute><WorkspaceApp /></ProtectedRoute>;
+function HomeRoute() {
+  return <><SignedIn><WorkspaceApp /></SignedIn><SignedOut><LandingPage /></SignedOut></>;
+}
+
+function LandingPage() {
+  return <div className="landing-screen"><div className="landing-content"><div className="brand-kicker">ROSE TINSLEY Consulting</div><div className="landing-wordmark">Lowlu</div><div className="landing-rule"/><div className="eyebrow">Private London site-selection workspace</div><h1>Make the next<br/><em>place</em> worth finding.</h1><p>Review curated venues and vacant plots, share a considered shortlist, and move from map to decision with clarity.</p><div className="landing-actions"><Link to="/sign-in" className="decision accept">Sign in <ArrowRight size={13}/></Link><Link to="/sign-up" className="landing-secondary">Create an account</Link></div></div><div className="landing-aside"><div className="landing-coordinate">51°30′N<br/>0°07′W</div><div className="landing-note">A private tool for<br/>thoughtful site selection.</div></div></div>;
 }
 
 function AdminRoute() {
@@ -486,7 +490,7 @@ function PlusIcon() {
 
 function App() {
   if (!clerkPublishableKey) return <ConfigurationNotice />;
-  return <ClerkProvider publishableKey={clerkPublishableKey} appearance={AuthAppearance()}><BrowserRouter><Routes><Route path="/sign-in/*" element={<AuthRoutes/>}/><Route path="/sign-up/*" element={<AuthRoutes/>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="*" element={<AppRoute/>}/></Routes></BrowserRouter></ClerkProvider>;
+  return <ClerkProvider publishableKey={clerkPublishableKey} proxyUrl={import.meta.env.VITE_CLERK_PROXY_URL} appearance={AuthAppearance()}><BrowserRouter><Routes><Route path="/sign-in/*" element={<AuthRoutes/>}/><Route path="/sign-up/*" element={<AuthRoutes/>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="*" element={<HomeRoute/>}/></Routes></BrowserRouter></ClerkProvider>;
 }
 
 createRoot(document.getElementById('root')).render(<App />);

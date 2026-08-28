@@ -1,0 +1,1 @@
+- [Express and Vite port sharing](vite-express-port-sharing.md) — middleware-mode Vite must not reserve the same HMR port as the Express listener, or every preview request can return 426.

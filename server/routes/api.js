@@ -50,6 +50,10 @@ async function hasWorkspaceAccess(db, user, workspaceId) {
   return result.rows.length > 0;
 }
 
+router.use((req, res, next) => {
+  if (req.method === 'GET') privateResponse(res);
+  next();
+});
 router.use(requireUser);
 
 router.get('/me', async (req, res) => {

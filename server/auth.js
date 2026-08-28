@@ -2,8 +2,9 @@ import { createClerkClient } from '@clerk/backend';
 import { sql } from 'drizzle-orm';
 
 const secretKey = process.env.CLERK_SECRET_KEY;
-export const clerkConfigured = Boolean(secretKey);
-export const clerkClient = clerkConfigured ? createClerkClient({ secretKey }) : null;
+export const publishableKey = process.env.CLERK_PUBLISHABLE_KEY || process.env.VITE_CLERK_PUBLISHABLE_KEY;
+export const clerkConfigured = Boolean(secretKey && publishableKey);
+export const clerkClient = clerkConfigured ? createClerkClient({ secretKey, publishableKey }) : null;
 
 const configuredAdminEmails = (process.env.PLATFORM_ADMIN_EMAILS || 'eilish@rosetinsleyconsulting.com')
   .split(',')

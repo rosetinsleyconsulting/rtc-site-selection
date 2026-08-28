@@ -6,6 +6,77 @@ import { requirePlatformAdmin, requireUser, clerkClient } from '../auth.js';
 
 const router = express.Router();
 const validStatuses = new Set(['new', 'accepted', 'dismissed']);
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+const DEFAULT_MAP_CONFIG = {
+  contextLayerDefaultOn: true,
+  layerOrder: ['parcels', 'buildings'],
+  symbology: {
+    parcels: { color: '#748894', width: 1, opacity: 0.55 },
+    buildingsFill: { color: '#6F8443', opacity: 0.5 },
+    buildingsOutline: { color: '#454E3A', width: 1 },
+    markers: { new: '#A67C7C', accepted: '#517C78', dismissed: '#9D9D91' },
+  },
+};
+
+function mergeMapConfig(stored) {
+  const config = (stored && typeof stored === 'object') ? stored : {};
+  const symbology = (config.symbology && typeof config.symbology === 'object') ? config.symbology : {};
+  const validOrder = Array.isArray(config.layerOrder)
+    && config.layerOrder.length === 2
+    && new Set(config.layerOrder).size === 2
+    && config.layerOrder.every(key => key === 'parcels' || key === 'buildings');
+  return {
+    contextLayerDefaultOn: typeof config.contextLayerDefaultOn === 'boolean' ? config.contextLayerDefaultOn : DEFAULT_MAP_CONFIG.contextLayerDefaultOn,
+    layerOrder: validOrder ? config.layerOrder : DEFAULT_MAP_CONFIG.layerOrder,
+    symbology: {
+      parcels: { ...DEFAULT_MAP_CONFIG.symbology.parcels, ...(symbology.parcels || {}) },
+      buildingsFill: { ...DEFAULT_MAP_CONFIG.symbology.buildingsFill, ...(symbology.buildingsFill || {}) },
+      buildingsOutline: { ...DEFAULT_MAP_CONFIG.symbology.buildingsOutline, ...(symbology.buildingsOutline || {}) },
+      markers: { ...DEFAULT_MAP_CONFIG.symbology.markers, ...(symbology.markers || {}) },
+    },
+  };
+}
+
+function clampNumber(value, min, max) {
+  const num = Number(value);
+  return Number.isFinite(num) ? Math.min(max, Math.max(min, num)) : null;
+}
+
+function validateMapConfig(input) {
+  if (!input || typeof input !== 'object') return null;
+  const layerOrder = input.layerOrder;
+  if (!Array.isArray(layerOrder) || layerOrder.length !== 2 || new Set(layerOrder).size !== 2 || !layerOrder.every(key => key === 'parcels' || key === 'buildings')) return null;
+
+  const symbology = input.symbology || {};
+  const markers = symbology.markers || {};
+  const colors = {
+    parcels: symbology.parcels?.color,
+    buildingsFill: symbology.buildingsFill?.color,
+    buildingsOutline: symbology.buildingsOutline?.color,
+    markerNew: markers.new,
+    markerAccepted: markers.accepted,
+    markerDismissed: markers.dismissed,
+  };
+  if (Object.values(colors).some(color => !HEX_COLOR.test(color || ''))) return null;
+
+  const parcelsWidth = clampNumber(symbology.parcels?.width, 0.2, 6);
+  const parcelsOpacity = clampNumber(symbology.parcels?.opacity, 0, 1);
+  const buildingsFillOpacity = clampNumber(symbology.buildingsFill?.opacity, 0, 1);
+  const buildingsOutlineWidth = clampNumber(symbology.buildingsOutline?.width, 0.2, 6);
+  if ([parcelsWidth, parcelsOpacity, buildingsFillOpacity, buildingsOutlineWidth].some(value => value === null)) return null;
+
+  return {
+    contextLayerDefaultOn: Boolean(input.contextLayerDefaultOn),
+    layerOrder,
+    symbology: {
+      parcels: { color: colors.parcels, width: parcelsWidth, opacity: parcelsOpacity },
+      buildingsFill: { color: colors.buildingsFill, opacity: buildingsFillOpacity },
+      buildingsOutline: { color: colors.buildingsOutline, width: buildingsOutlineWidth },
+      markers: { new: colors.markerNew, accepted: colors.markerAccepted, dismissed: colors.markerDismissed },
+    },
+  };
+}
 
 function privateResponse(res) {
   res.set('Cache-Control', 'private, no-store');
@@ -108,6 +179,32 @@ router.get('/workspaces/:workspaceId/sites', async (req, res) => {
     ORDER BY s.id
   `);
   res.json({ sites: result.rows });
+});
+
+router.get('/workspaces/:workspaceId/map-config', async (req, res) => {
+  privateResponse(res);
+  const workspaceId = Number(req.params.workspaceId);
+  if (!Number.isInteger(workspaceId)) return res.status(400).json({ error: 'Invalid workspace id' });
+  if (!(await hasWorkspaceAccess(req.app.locals.db, req.localUser, workspaceId))) {
+    return res.status(403).json({ error: 'Workspace access required' });
+  }
+  const result = await req.app.locals.db.execute(sql`SELECT map_config FROM workspaces WHERE id = ${workspaceId} LIMIT 1`);
+  if (!result.rows.length) return res.status(404).json({ error: 'Workspace not found' });
+  res.json({ mapConfig: mergeMapConfig(result.rows[0].map_config) });
+});
+
+router.patch('/admin/workspaces/:workspaceId/map-config', requirePlatformAdmin, async (req, res) => {
+  const workspaceId = Number(req.params.workspaceId);
+  if (!Number.isInteger(workspaceId)) return res.status(400).json({ error: 'Invalid workspace id' });
+  const validated = validateMapConfig(req.body?.mapConfig);
+  if (!validated) return res.status(400).json({ error: 'Invalid map configuration' });
+  const result = await req.app.locals.db
+    .update(workspaces)
+    .set({ mapConfig: validated })
+    .where(sql`${workspaces.id} = ${workspaceId}`)
+    .returning({ id: workspaces.id, mapConfig: workspaces.mapConfig });
+  if (!result.length) return res.status(404).json({ error: 'Workspace not found' });
+  res.json({ mapConfig: mergeMapConfig(result[0].mapConfig) });
 });
 
 router.patch('/workspaces/:workspaceId/sites/:siteId/status', async (req, res) => {

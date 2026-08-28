@@ -14,6 +14,7 @@ import {
   Menu,
   RotateCcw,
   Search,
+  Settings2,
   ShieldCheck,
   Users,
   X,
@@ -38,6 +39,20 @@ maplibregl.setWorkerUrl(maplibreWorkerUrl);
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const tileServerUrl = import.meta.env.VITE_TILE_SERVER_URL?.replace(/\/+$/, '');
 const CONTEXT_LAYER_IDS = ['context-parcels', 'context-buildings-fill', 'context-buildings-outline'];
+const FALLBACK_MAP_CONFIG = {
+  contextLayerDefaultOn: true,
+  layerOrder: ['parcels', 'buildings'],
+  symbology: {
+    parcels: { color: '#748894', width: 1, opacity: 0.55 },
+    buildingsFill: { color: '#6F8443', opacity: 0.5 },
+    buildingsOutline: { color: '#454E3A', width: 1 },
+    markers: { new: '#A67C7C', accepted: '#517C78', dismissed: '#9D9D91' },
+  },
+};
+const LAYER_ORDER_OPTIONS = [
+  { value: 'parcels-buildings', order: ['parcels', 'buildings'], label: 'Buildings above parcels' },
+  { value: 'buildings-parcels', order: ['buildings', 'parcels'], label: 'Parcels above buildings' },
+];
 const numberValue = value => {
   if (value === undefined || value === null || String(value).trim() === '') return null;
   const parsed = Number(value);
@@ -220,14 +235,20 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [mapConfig, setMapConfig] = useState(null);
+  const [mapSettingsOpen, setMapSettingsOpen] = useState(false);
 
   const loadSites = async () => {
     setLoading(true);
     setError('');
     try {
-      const response = await api(`/api/workspaces/${workspace.id}/sites`);
-      setSites(response.sites || []);
-      if (response.sites?.length) setSelectedId(current => current || response.sites[0].id);
+      const [sitesResponse, configResponse] = await Promise.all([
+        api(`/api/workspaces/${workspace.id}/sites`),
+        api(`/api/workspaces/${workspace.id}/map-config`),
+      ]);
+      setSites(sitesResponse.sites || []);
+      setMapConfig(configResponse.mapConfig);
+      if (sitesResponse.sites?.length) setSelectedId(current => current || sitesResponse.sites[0].id);
       const migrationKey = `lowlu-statuses-migrated-${workspace.id}`;
       const oldStatuses = localStorage.getItem('lowlu-statuses');
       if (oldStatuses && !localStorage.getItem(migrationKey)) {
@@ -313,6 +334,7 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
         </div>
         <div className="topline-actions">
           {profile.isPlatformAdmin && <Link to="/admin" className="back-to-admin"><ShieldCheck size={13}/> Admin overview</Link>}
+          {profile.isPlatformAdmin && <button type="button" className={`back-to-admin ${mapSettingsOpen ? 'active' : ''}`} onClick={() => setMapSettingsOpen(open => !open)}><Settings2 size={13}/> Map settings</button>}
           <div className="view-switch">
             <button className={view === 'split' ? 'active' : ''} onClick={() => setView('split')}><MapPin size={13}/> Split view</button>
             <button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><List size={13}/> List</button>
@@ -320,6 +342,7 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
           </div>
         </div>
       </header>
+      {profile.isPlatformAdmin && mapSettingsOpen && mapConfig && <AdminMapSettings workspace={workspace} mapConfig={mapConfig} onSaved={setMapConfig} onClose={() => setMapSettingsOpen(false)}/>}
       <div className={`workspace ${view === 'list' ? 'list-only' : view === 'map' ? 'map-only' : 'split'}`}>
         {view !== 'map' && <section className="list-panel">
           {view === 'split' && selected && <Detail site={selected} onStatus={setStatus}/>}
@@ -332,9 +355,9 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
           </button>) : <div className="empty"><h2>No sites match</h2><p>Try clearing a filter or searching a different part of the shortlist.</p></div>}</div>
         </section>}
         {view === 'map'
-          ? <MapPanel sites={filtered} selected={selected} onSelect={setSelectedId}/>
+          ? <MapPanel sites={filtered} selected={selected} onSelect={setSelectedId} mapConfig={mapConfig}/>
           : <div className="map-column">
-              {view !== 'list' && <MapPanel sites={filtered} selected={selected} onSelect={setSelectedId}/>}
+              {view !== 'list' && <MapPanel sites={filtered} selected={selected} onSelect={setSelectedId} mapConfig={mapConfig}/>}
               {view === 'list' && selected && <Detail site={selected} onStatus={setStatus}/>}
             </div>}
       </div>
@@ -342,13 +365,15 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
   </div>;
 }
 
-function MapPanel({ sites, selected, onSelect }) {
+function MapPanel({ sites, selected, onSelect, mapConfig }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const onSelectRef = useRef(onSelect);
+  const configRef = useRef(mapConfig || FALLBACK_MAP_CONFIG);
   const [mapFailed, setMapFailed] = useState(false);
-  const [contextLayerOn, setContextLayerOn] = useState(Boolean(tileServerUrl));
+  const [contextLayerOn, setContextLayerOn] = useState(Boolean(tileServerUrl) && Boolean((mapConfig || FALLBACK_MAP_CONFIG).contextLayerDefaultOn));
   onSelectRef.current = onSelect;
+  configRef.current = mapConfig || FALLBACK_MAP_CONFIG;
   const geoJson = useMemo(() => ({
     type: 'FeatureCollection',
     features: sites.map(site => ({
@@ -392,18 +417,25 @@ function MapPanel({ sites, selected, onSelect }) {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.on('load', () => {
+      const config = configRef.current;
       if (tileServerUrl) {
         const contextVisibility = contextLayerOn ? 'visible' : 'none';
-        map.addSource('lowlu-parcels', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_parcels/{z}/{x}/{y}`] });
-        map.addLayer({ id: 'context-parcels', type: 'line', source: 'lowlu-parcels', 'source-layer': 'lowlu_final_parcels', layout: { visibility: contextVisibility }, paint: { 'line-color': '#748894', 'line-width': 1, 'line-opacity': 0.55 } });
-        map.addSource('lowlu-buildings', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_buildings/{z}/{x}/{y}`] });
-        map.addLayer({ id: 'context-buildings-fill', type: 'fill', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', layout: { visibility: contextVisibility }, paint: { 'fill-color': '#6F8443', 'fill-opacity': 0.5 } });
-        map.addLayer({ id: 'context-buildings-outline', type: 'line', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', layout: { visibility: contextVisibility }, paint: { 'line-color': '#454E3A', 'line-width': 1 } });
+        const { parcels, buildingsFill, buildingsOutline } = config.symbology;
+        const addParcels = () => {
+          map.addSource('lowlu-parcels', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_parcels/{z}/{x}/{y}`] });
+          map.addLayer({ id: 'context-parcels', type: 'line', source: 'lowlu-parcels', 'source-layer': 'lowlu_final_parcels', layout: { visibility: contextVisibility }, paint: { 'line-color': parcels.color, 'line-width': parcels.width, 'line-opacity': parcels.opacity } });
+        };
+        const addBuildings = () => {
+          map.addSource('lowlu-buildings', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_buildings/{z}/{x}/{y}`] });
+          map.addLayer({ id: 'context-buildings-fill', type: 'fill', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', layout: { visibility: contextVisibility }, paint: { 'fill-color': buildingsFill.color, 'fill-opacity': buildingsFill.opacity } });
+          map.addLayer({ id: 'context-buildings-outline', type: 'line', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', layout: { visibility: contextVisibility }, paint: { 'line-color': buildingsOutline.color, 'line-width': buildingsOutline.width } });
+        };
+        config.layerOrder.forEach(key => (key === 'parcels' ? addParcels : key === 'buildings' ? addBuildings : () => {})());
       }
       map.addSource('sites', { type: 'geojson', data: geoJson });
       map.addLayer({ id: 'site-points', type: 'circle', source: 'sites', paint: {
         'circle-radius': ['case', ['get', 'selected'], 10, 7],
-        'circle-color': ['match', ['get', 'status'], 'accepted', '#517C78', 'dismissed', '#9D9D91', '#A67C7C'],
+        'circle-color': ['match', ['get', 'status'], 'accepted', config.symbology.markers.accepted, 'dismissed', config.symbology.markers.dismissed, config.symbology.markers.new],
         'circle-stroke-width': ['case', ['get', 'selected'], 3, 2],
         'circle-stroke-color': ['case', ['get', 'selected'], '#2D2D2A', '#FEFFF8'],
         'circle-opacity': ['case', ['==', ['get', 'status'], 'dismissed'], 0.68, 1],
@@ -433,6 +465,33 @@ function MapPanel({ sites, selected, onSelect }) {
   }, [contextLayerOn]);
   useEffect(() => {
     const map = mapRef.current;
+    if (!map || !mapConfig) return;
+    const applyStyle = () => {
+      const { parcels, buildingsFill, buildingsOutline, markers } = mapConfig.symbology;
+      if (map.getLayer('context-parcels')) {
+        map.setPaintProperty('context-parcels', 'line-color', parcels.color);
+        map.setPaintProperty('context-parcels', 'line-width', parcels.width);
+        map.setPaintProperty('context-parcels', 'line-opacity', parcels.opacity);
+      }
+      if (map.getLayer('context-buildings-fill')) {
+        map.setPaintProperty('context-buildings-fill', 'fill-color', buildingsFill.color);
+        map.setPaintProperty('context-buildings-fill', 'fill-opacity', buildingsFill.opacity);
+      }
+      if (map.getLayer('context-buildings-outline')) {
+        map.setPaintProperty('context-buildings-outline', 'line-color', buildingsOutline.color);
+        map.setPaintProperty('context-buildings-outline', 'line-width', buildingsOutline.width);
+      }
+      if (map.getLayer('site-points')) {
+        map.setPaintProperty('site-points', 'circle-color', ['match', ['get', 'status'], 'accepted', markers.accepted, 'dismissed', markers.dismissed, markers.new]);
+      }
+      const layerIdsByKey = { parcels: ['context-parcels'], buildings: ['context-buildings-fill', 'context-buildings-outline'] };
+      mapConfig.layerOrder.forEach(key => layerIdsByKey[key]?.forEach(id => { if (map.getLayer(id)) map.moveLayer(id); }));
+      if (map.getLayer('site-points')) map.moveLayer('site-points');
+    };
+    if (map.loaded()) applyStyle(); else map.once('load', applyStyle);
+  }, [mapConfig]);
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !selected) return;
     map.easeTo({ center: [Number(selected.lon), Number(selected.lat)], zoom: Math.max(map.getZoom(), 15), duration: 650, essential: true });
   }, [selected?.id]);
@@ -444,7 +503,88 @@ function MapPanel({ sites, selected, onSelect }) {
     {tileServerUrl
       ? <button type="button" className={`context-layer ${contextLayerOn ? 'active' : ''}`} aria-pressed={contextLayerOn} onClick={() => setContextLayerOn(on => !on)}><Layers3 size={13}/><span>Parcels & buildings</span></button>
       : <div className="context-layer" title="Tile server endpoint required before this layer can be enabled"><Layers3 size={13}/><span>Parcels & buildings</span><span className="coming-soon">Awaiting connection</span></div>}
-    <div className="map-legend"><span><i className="legend-dot" style={{ background: 'var(--rose)' }}/> New</span><span><i className="legend-dot" style={{ background: 'var(--teal)' }}/> Accepted</span><span><i className="legend-dot" style={{ background: '#9d9d91' }}/> Dismissed</span></div>
+    <div className="map-legend"><span><i className="legend-dot" style={{ background: (mapConfig || FALLBACK_MAP_CONFIG).symbology.markers.new }}/> New</span><span><i className="legend-dot" style={{ background: (mapConfig || FALLBACK_MAP_CONFIG).symbology.markers.accepted }}/> Accepted</span><span><i className="legend-dot" style={{ background: (mapConfig || FALLBACK_MAP_CONFIG).symbology.markers.dismissed }}/> Dismissed</span></div>
+  </section>;
+}
+
+function ColorField({ label, value, onChange }) {
+  return <label className="color-field">{label}<span className="color-field-input"><input type="color" value={value} onChange={event => onChange(event.target.value)}/><input type="text" value={value} maxLength={7} onChange={event => onChange(event.target.value)}/></span></label>;
+}
+
+function RangeField({ label, value, onChange, min, max, step }) {
+  return <label className="range-field">{label}<span className="range-field-input"><input type="range" min={min} max={max} step={step} value={value} onChange={event => onChange(Number(event.target.value))}/><span>{value}</span></span></label>;
+}
+
+function AdminMapSettings({ workspace, mapConfig, onSaved, onClose }) {
+  const [draft, setDraft] = useState(mapConfig);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => { setDraft(mapConfig); }, [mapConfig]);
+
+  const setField = (group, key, value) => setDraft(current => ({ ...current, symbology: { ...current.symbology, [group]: { ...current.symbology[group], [key]: value } } }));
+
+  const save = async event => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const response = await api(`/api/admin/workspaces/${workspace.id}/map-config`, { method: 'PATCH', body: JSON.stringify({ mapConfig: draft }) });
+      onSaved(response.mapConfig);
+      setNotice('Map appearance updated for this client.');
+    } catch (saveError) {
+      setError(saveError.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const orderValue = draft.layerOrder.join('-');
+
+  return <section className="map-settings-panel">
+    <div className="map-settings-head">
+      <div>
+        <div className="admin-card-kicker">Admin only · not visible to this client</div>
+        <h2>Map appearance</h2>
+        <p>Controls how the map renders for everyone in {workspace.name}&rsquo;s workspace.</p>
+      </div>
+      <button type="button" className="map-settings-close" onClick={onClose} aria-label="Close map settings"><X size={16}/></button>
+    </div>
+    {(notice || error) && <div className={`admin-notice ${error ? 'is-error' : ''}`}>{error || notice}<button type="button" onClick={() => { setNotice(''); setError(''); }} aria-label="Dismiss notification"><X size={14}/></button></div>}
+    <form onSubmit={save} className="map-settings-form">
+      <div className="map-settings-row">
+        <label className="map-settings-toggle"><input type="checkbox" checked={draft.contextLayerDefaultOn} onChange={event => setDraft(current => ({ ...current, contextLayerDefaultOn: event.target.checked }))}/> Show parcels &amp; buildings by default</label>
+        <label className="map-settings-select">Layer order<select className="filter-select" value={orderValue} onChange={event => setDraft(current => ({ ...current, layerOrder: LAYER_ORDER_OPTIONS.find(option => option.value === event.target.value).order }))}>
+          {LAYER_ORDER_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
+        </select></label>
+      </div>
+      <div className="map-settings-grid">
+        <fieldset>
+          <legend>Parcel outlines</legend>
+          <ColorField label="Line colour" value={draft.symbology.parcels.color} onChange={value => setField('parcels', 'color', value)}/>
+          <RangeField label="Line width" min={0.2} max={4} step={0.1} value={draft.symbology.parcels.width} onChange={value => setField('parcels', 'width', value)}/>
+          <RangeField label="Opacity" min={0} max={1} step={0.05} value={draft.symbology.parcels.opacity} onChange={value => setField('parcels', 'opacity', value)}/>
+        </fieldset>
+        <fieldset>
+          <legend>Buildings</legend>
+          <ColorField label="Fill colour" value={draft.symbology.buildingsFill.color} onChange={value => setField('buildingsFill', 'color', value)}/>
+          <RangeField label="Fill opacity" min={0} max={1} step={0.05} value={draft.symbology.buildingsFill.opacity} onChange={value => setField('buildingsFill', 'opacity', value)}/>
+          <ColorField label="Outline colour" value={draft.symbology.buildingsOutline.color} onChange={value => setField('buildingsOutline', 'color', value)}/>
+          <RangeField label="Outline width" min={0.2} max={4} step={0.1} value={draft.symbology.buildingsOutline.width} onChange={value => setField('buildingsOutline', 'width', value)}/>
+        </fieldset>
+        <fieldset>
+          <legend>Site markers</legend>
+          <ColorField label="New" value={draft.symbology.markers.new} onChange={value => setField('markers', 'new', value)}/>
+          <ColorField label="Accepted" value={draft.symbology.markers.accepted} onChange={value => setField('markers', 'accepted', value)}/>
+          <ColorField label="Dismissed" value={draft.symbology.markers.dismissed} onChange={value => setField('markers', 'dismissed', value)}/>
+        </fieldset>
+      </div>
+      <div className="map-settings-actions">
+        <button type="button" className="decision" onClick={() => setDraft(mapConfig)} disabled={busy}>Discard changes</button>
+        <button className="decision accept" disabled={busy}>{busy ? <LoaderCircle className="spin" size={13}/> : <Check size={13}/>} Save for this client</button>
+      </div>
+    </form>
   </section>;
 }
 

@@ -2,6 +2,7 @@ import {
   boolean,
   doublePrecision,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -28,6 +29,7 @@ export const workspaces = pgTable('workspaces', {
   id: serial('id').primaryKey(),
   name: text('name').notNull(),
   slug: text('slug').notNull(),
+  mapConfig: jsonb('map_config'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, table => ({
   slugUnique: uniqueIndex('workspaces_slug_idx').on(table.slug),

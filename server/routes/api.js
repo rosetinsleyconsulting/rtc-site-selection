@@ -17,11 +17,16 @@ const DEFAULT_MAP_CONFIG = {
     buildingsOutline: { color: '#454E3A', width: 1 },
     markers: { new: '#A67C7C', accepted: '#517C78', dismissed: '#9D9D91' },
   },
+  zoomRanges: {
+    parcels: { minZoom: 15, maxZoom: 24 },
+    buildings: { minZoom: 0, maxZoom: 24 },
+  },
 };
 
 function mergeMapConfig(stored) {
   const config = (stored && typeof stored === 'object') ? stored : {};
   const symbology = (config.symbology && typeof config.symbology === 'object') ? config.symbology : {};
+  const zoomRanges = (config.zoomRanges && typeof config.zoomRanges === 'object') ? config.zoomRanges : {};
   const validOrder = Array.isArray(config.layerOrder)
     && config.layerOrder.length === 2
     && new Set(config.layerOrder).size === 2
@@ -34,6 +39,10 @@ function mergeMapConfig(stored) {
       buildingsFill: { ...DEFAULT_MAP_CONFIG.symbology.buildingsFill, ...(symbology.buildingsFill || {}) },
       buildingsOutline: { ...DEFAULT_MAP_CONFIG.symbology.buildingsOutline, ...(symbology.buildingsOutline || {}) },
       markers: { ...DEFAULT_MAP_CONFIG.symbology.markers, ...(symbology.markers || {}) },
+    },
+    zoomRanges: {
+      parcels: { ...DEFAULT_MAP_CONFIG.zoomRanges.parcels, ...(zoomRanges.parcels || {}) },
+      buildings: { ...DEFAULT_MAP_CONFIG.zoomRanges.buildings, ...(zoomRanges.buildings || {}) },
     },
   };
 }
@@ -66,6 +75,14 @@ function validateMapConfig(input) {
   const buildingsOutlineWidth = clampNumber(symbology.buildingsOutline?.width, 0.2, 6);
   if ([parcelsWidth, parcelsOpacity, buildingsFillOpacity, buildingsOutlineWidth].some(value => value === null)) return null;
 
+  const zoomRanges = input.zoomRanges || {};
+  const parcelsMinZoom = clampNumber(zoomRanges.parcels?.minZoom, 0, 24);
+  const parcelsMaxZoom = clampNumber(zoomRanges.parcels?.maxZoom, 0, 24);
+  const buildingsMinZoom = clampNumber(zoomRanges.buildings?.minZoom, 0, 24);
+  const buildingsMaxZoom = clampNumber(zoomRanges.buildings?.maxZoom, 0, 24);
+  if ([parcelsMinZoom, parcelsMaxZoom, buildingsMinZoom, buildingsMaxZoom].some(value => value === null)) return null;
+  if (parcelsMinZoom > parcelsMaxZoom || buildingsMinZoom > buildingsMaxZoom) return null;
+
   return {
     contextLayerDefaultOn: Boolean(input.contextLayerDefaultOn),
     layerOrder,
@@ -74,6 +91,10 @@ function validateMapConfig(input) {
       buildingsFill: { color: colors.buildingsFill, opacity: buildingsFillOpacity },
       buildingsOutline: { color: colors.buildingsOutline, width: buildingsOutlineWidth },
       markers: { new: colors.markerNew, accepted: colors.markerAccepted, dismissed: colors.markerDismissed },
+    },
+    zoomRanges: {
+      parcels: { minZoom: parcelsMinZoom, maxZoom: parcelsMaxZoom },
+      buildings: { minZoom: buildingsMinZoom, maxZoom: buildingsMaxZoom },
     },
   };
 }

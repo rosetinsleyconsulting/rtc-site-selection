@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   ExternalLink,
+  GripVertical,
   Layers3,
   List,
   LoaderCircle,
@@ -39,7 +40,10 @@ maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const tileServerUrl = import.meta.env.TILE_SERVER_URL?.replace(/\/+$/, '');
-const CONTEXT_LAYER_IDS = ['context-parcels', 'context-buildings-fill', 'context-buildings-outline'];
+const CONTEXT_LAYERS = [
+  { key: 'parcels', label: 'Parcels', mapLayerIds: ['context-parcels'] },
+  { key: 'buildings', label: 'Buildings', mapLayerIds: ['context-buildings-fill', 'context-buildings-outline'] },
+];
 const FALLBACK_MAP_CONFIG = {
   contextLayerDefaultOn: true,
   layerOrder: ['parcels', 'buildings'],
@@ -49,11 +53,11 @@ const FALLBACK_MAP_CONFIG = {
     buildingsOutline: { color: '#454E3A', width: 1 },
     markers: { new: '#A67C7C', accepted: '#517C78', dismissed: '#9D9D91' },
   },
+  zoomRanges: {
+    parcels: { minZoom: 15, maxZoom: 24 },
+    buildings: { minZoom: 0, maxZoom: 24 },
+  },
 };
-const LAYER_ORDER_OPTIONS = [
-  { value: 'parcels-buildings', order: ['parcels', 'buildings'], label: 'Buildings above parcels' },
-  { value: 'buildings-parcels', order: ['buildings', 'parcels'], label: 'Parcels above buildings' },
-];
 const numberValue = value => {
   if (value === undefined || value === null || String(value).trim() === '') return null;
   const parsed = Number(value);
@@ -372,7 +376,10 @@ function MapPanel({ sites, selected, onSelect, mapConfig }) {
   const onSelectRef = useRef(onSelect);
   const configRef = useRef(mapConfig || FALLBACK_MAP_CONFIG);
   const [mapFailed, setMapFailed] = useState(false);
-  const [contextLayerOn, setContextLayerOn] = useState(Boolean(tileServerUrl) && Boolean((mapConfig || FALLBACK_MAP_CONFIG).contextLayerDefaultOn));
+  const [layerVisibility, setLayerVisibility] = useState(() => {
+    const defaultOn = Boolean(tileServerUrl) && Boolean((mapConfig || FALLBACK_MAP_CONFIG).contextLayerDefaultOn);
+    return Object.fromEntries(CONTEXT_LAYERS.map(layer => [layer.key, defaultOn]));
+  });
   onSelectRef.current = onSelect;
   configRef.current = mapConfig || FALLBACK_MAP_CONFIG;
   const geoJson = useMemo(() => ({
@@ -420,16 +427,17 @@ function MapPanel({ sites, selected, onSelect, mapConfig }) {
     map.on('load', () => {
       const config = configRef.current;
       if (tileServerUrl) {
-        const contextVisibility = contextLayerOn ? 'visible' : 'none';
+        const visibilityFor = key => (layerVisibility[key] ? 'visible' : 'none');
+        const zoomRanges = config.zoomRanges || FALLBACK_MAP_CONFIG.zoomRanges;
         const { parcels, buildingsFill, buildingsOutline } = config.symbology;
         const addParcels = () => {
           map.addSource('inspire-parcels', { type: 'vector', tiles: [`${tileServerUrl}/inspire_parcels/{z}/{x}/{y}`] });
-          map.addLayer({ id: 'context-parcels', type: 'line', source: 'inspire-parcels', 'source-layer': 'inspire_parcels', layout: { visibility: contextVisibility }, paint: { 'line-color': parcels.color, 'line-width': parcels.width, 'line-opacity': parcels.opacity } });
+          map.addLayer({ id: 'context-parcels', type: 'line', source: 'inspire-parcels', 'source-layer': 'inspire_parcels', minzoom: zoomRanges.parcels.minZoom, maxzoom: zoomRanges.parcels.maxZoom, layout: { visibility: visibilityFor('parcels') }, paint: { 'line-color': parcels.color, 'line-width': parcels.width, 'line-opacity': parcels.opacity } });
         };
         const addBuildings = () => {
           map.addSource('lowlu-buildings', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_buildings/{z}/{x}/{y}`] });
-          map.addLayer({ id: 'context-buildings-fill', type: 'fill', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', layout: { visibility: contextVisibility }, paint: { 'fill-color': buildingsFill.color, 'fill-opacity': buildingsFill.opacity } });
-          map.addLayer({ id: 'context-buildings-outline', type: 'line', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', layout: { visibility: contextVisibility }, paint: { 'line-color': buildingsOutline.color, 'line-width': buildingsOutline.width } });
+          map.addLayer({ id: 'context-buildings-fill', type: 'fill', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', minzoom: zoomRanges.buildings.minZoom, maxzoom: zoomRanges.buildings.maxZoom, layout: { visibility: visibilityFor('buildings') }, paint: { 'fill-color': buildingsFill.color, 'fill-opacity': buildingsFill.opacity } });
+          map.addLayer({ id: 'context-buildings-outline', type: 'line', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', minzoom: zoomRanges.buildings.minZoom, maxzoom: zoomRanges.buildings.maxZoom, layout: { visibility: visibilityFor('buildings') }, paint: { 'line-color': buildingsOutline.color, 'line-width': buildingsOutline.width } });
         };
         config.layerOrder.forEach(key => (key === 'parcels' ? addParcels : key === 'buildings' ? addBuildings : () => {})());
       }
@@ -459,11 +467,12 @@ function MapPanel({ sites, selected, onSelect, mapConfig }) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !tileServerUrl) return;
-    const applyVisibility = () => CONTEXT_LAYER_IDS.forEach(id => {
-      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', contextLayerOn ? 'visible' : 'none');
+    const applyVisibility = () => CONTEXT_LAYERS.forEach(layer => {
+      const visibility = layerVisibility[layer.key] ? 'visible' : 'none';
+      layer.mapLayerIds.forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visibility); });
     });
     if (map.loaded()) applyVisibility(); else map.once('load', applyVisibility);
-  }, [contextLayerOn]);
+  }, [layerVisibility]);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapConfig) return;
@@ -485,8 +494,14 @@ function MapPanel({ sites, selected, onSelect, mapConfig }) {
       if (map.getLayer('site-points')) {
         map.setPaintProperty('site-points', 'circle-color', ['match', ['get', 'status'], 'accepted', markers.accepted, 'dismissed', markers.dismissed, markers.new]);
       }
-      const layerIdsByKey = { parcels: ['context-parcels'], buildings: ['context-buildings-fill', 'context-buildings-outline'] };
-      mapConfig.layerOrder.forEach(key => layerIdsByKey[key]?.forEach(id => { if (map.getLayer(id)) map.moveLayer(id); }));
+      if (mapConfig.zoomRanges) {
+        CONTEXT_LAYERS.forEach(layer => {
+          const range = mapConfig.zoomRanges[layer.key];
+          if (!range) return;
+          layer.mapLayerIds.forEach(id => { if (map.getLayer(id)) map.setLayerZoomRange(id, range.minZoom, range.maxZoom); });
+        });
+      }
+      mapConfig.layerOrder.forEach(key => CONTEXT_LAYERS.find(layer => layer.key === key)?.mapLayerIds.forEach(id => { if (map.getLayer(id)) map.moveLayer(id); }));
       if (map.getLayer('site-points')) map.moveLayer('site-points');
     };
     if (map.loaded()) applyStyle(); else map.once('load', applyStyle);
@@ -497,13 +512,25 @@ function MapPanel({ sites, selected, onSelect, mapConfig }) {
     map.easeTo({ center: [Number(selected.lon), Number(selected.lat)], zoom: Math.max(map.getZoom(), 15), duration: 650, essential: true });
   }, [selected?.id]);
 
+  const orderedContextLayers = (mapConfig || FALLBACK_MAP_CONFIG).layerOrder
+    .map(key => CONTEXT_LAYERS.find(layer => layer.key === key))
+    .filter(Boolean);
+
   return <section className="map-panel">
     <div ref={containerRef} className="map-canvas" aria-label="Map of shortlisted sites" />
     {mapFailed && <div className="fallback-map" aria-label="Coordinate map of shortlisted sites"><div className="fallback-river" /><span className="fallback-place place-north">North London</span><span className="fallback-place place-west">West London</span><span className="fallback-place place-central">Central London</span>{fallbackPoints.map(site => <button aria-label={site.site_name} title={site.site_name} key={site.id} className={`fallback-point ${site.status} ${selected?.id === site.id ? 'selected' : ''}`} style={{ left: site.left, top: site.top }} onClick={() => onSelect(site.id)} />)}<div className="fallback-note">Interactive coordinate view · live basemap available with WebGL2</div></div>}
     <div className="map-head"><span className="map-chip">Site geography · live map</span><span className="map-chip">{sites.length} points</span></div>
     {tileServerUrl
-      ? <button type="button" className={`context-layer ${contextLayerOn ? 'active' : ''}`} aria-pressed={contextLayerOn} onClick={() => setContextLayerOn(on => !on)}><Layers3 size={13}/><span>Parcels & buildings</span></button>
-      : <div className="context-layer" title="Tile server endpoint required before this layer can be enabled"><Layers3 size={13}/><span>Parcels & buildings</span><span className="coming-soon">Awaiting connection</span></div>}
+      ? <details className="layers-menu">
+          <summary className="context-layer"><Layers3 size={13}/><span>Map layers</span></summary>
+          <div className="layers-menu-panel">
+            {orderedContextLayers.map(layer => <label key={layer.key} className="layers-menu-item">
+              <input type="checkbox" checked={Boolean(layerVisibility[layer.key])} onChange={() => setLayerVisibility(current => ({ ...current, [layer.key]: !current[layer.key] }))}/>
+              {layer.label}
+            </label>)}
+          </div>
+        </details>
+      : <div className="context-layer" title="Tile server endpoint required before this layer can be enabled"><Layers3 size={13}/><span>Map layers</span><span className="coming-soon">Awaiting connection</span></div>}
     <div className="map-legend"><span><i className="legend-dot" style={{ background: (mapConfig || FALLBACK_MAP_CONFIG).symbology.markers.new }}/> New</span><span><i className="legend-dot" style={{ background: (mapConfig || FALLBACK_MAP_CONFIG).symbology.markers.accepted }}/> Accepted</span><span><i className="legend-dot" style={{ background: (mapConfig || FALLBACK_MAP_CONFIG).symbology.markers.dismissed }}/> Dismissed</span></div>
   </section>;
 }
@@ -516,14 +543,17 @@ function RangeField({ label, value, onChange, min, max, step }) {
   return <label className="range-field">{label}<span className="range-field-input"><input type="range" min={min} max={max} step={step} value={value} onChange={event => onChange(Number(event.target.value))}/><span>{value}</span></span></label>;
 }
 
-function LayerRow({ title, swatches, defaultOpen, children }) {
+function LayerRow({ title, swatches, defaultOpen, children, draggable, dragging, onDragStart, onDragOver, onDragEnd }) {
   const [open, setOpen] = useState(Boolean(defaultOpen));
-  return <div className={`layer-row ${open ? 'open' : ''}`}>
-    <button type="button" className="layer-row-head" onClick={() => setOpen(current => !current)} aria-expanded={open}>
-      <span className="layer-row-swatches">{swatches.map((color, index) => <i key={index} className="layer-swatch" style={{ background: color }}/>)}</span>
-      <span className="layer-row-title">{title}</span>
-      <ChevronDown size={15} className="layer-row-chevron"/>
-    </button>
+  return <div className={`layer-row ${open ? 'open' : ''} ${dragging ? 'dragging' : ''}`} onDragOver={draggable ? onDragOver : undefined}>
+    <div className="layer-row-head">
+      {draggable && <span className="layer-row-grip" draggable="true" onDragStart={onDragStart} onDragEnd={onDragEnd} aria-label={`Drag to reorder ${title}`}><GripVertical size={14}/></span>}
+      <button type="button" className="layer-row-toggle" onClick={() => setOpen(current => !current)} aria-expanded={open}>
+        <span className="layer-row-swatches">{swatches.map((color, index) => <i key={index} className="layer-swatch" style={{ background: color }}/>)}</span>
+        <span className="layer-row-title">{title}</span>
+        <ChevronDown size={15} className="layer-row-chevron"/>
+      </button>
+    </div>
     {open && <div className="layer-row-body">{children}</div>}
   </div>;
 }
@@ -533,10 +563,28 @@ function AdminMapSettings({ workspace, mapConfig, onSaved, onClose }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [dragKey, setDragKey] = useState(null);
 
   useEffect(() => { setDraft(mapConfig); }, [mapConfig]);
 
   const setField = (group, key, value) => setDraft(current => ({ ...current, symbology: { ...current.symbology, [group]: { ...current.symbology[group], [key]: value } } }));
+
+  const setZoomField = (layerKey, field, value) => setDraft(current => {
+    const range = { ...current.zoomRanges[layerKey], [field]: value };
+    if (range.minZoom > range.maxZoom) range[field === 'minZoom' ? 'maxZoom' : 'minZoom'] = value;
+    return { ...current, zoomRanges: { ...current.zoomRanges, [layerKey]: range } };
+  });
+
+  const reorderTo = targetKey => setDraft(current => {
+    if (!dragKey || dragKey === targetKey) return current;
+    const order = [...current.layerOrder];
+    const from = order.indexOf(dragKey);
+    const to = order.indexOf(targetKey);
+    if (from === -1 || to === -1) return current;
+    order.splice(from, 1);
+    order.splice(to, 0, dragKey);
+    return { ...current, layerOrder: order };
+  });
 
   const save = async event => {
     event.preventDefault();
@@ -553,7 +601,31 @@ function AdminMapSettings({ workspace, mapConfig, onSaved, onClose }) {
     }
   };
 
-  const orderValue = draft.layerOrder.join('-');
+  const orderableLayers = {
+    parcels: {
+      title: 'Parcels',
+      swatches: [draft.symbology.parcels.color],
+      body: <>
+        <ColorField label="Line colour" value={draft.symbology.parcels.color} onChange={value => setField('parcels', 'color', value)}/>
+        <RangeField label="Line width" min={0.2} max={4} step={0.1} value={draft.symbology.parcels.width} onChange={value => setField('parcels', 'width', value)}/>
+        <RangeField label="Opacity" min={0} max={1} step={0.05} value={draft.symbology.parcels.opacity} onChange={value => setField('parcels', 'opacity', value)}/>
+        <RangeField label="Visible from zoom" min={0} max={24} step={1} value={draft.zoomRanges.parcels.minZoom} onChange={value => setZoomField('parcels', 'minZoom', value)}/>
+        <RangeField label="Visible up to zoom" min={0} max={24} step={1} value={draft.zoomRanges.parcels.maxZoom} onChange={value => setZoomField('parcels', 'maxZoom', value)}/>
+      </>,
+    },
+    buildings: {
+      title: 'Buildings',
+      swatches: [draft.symbology.buildingsFill.color, draft.symbology.buildingsOutline.color],
+      body: <>
+        <ColorField label="Fill colour" value={draft.symbology.buildingsFill.color} onChange={value => setField('buildingsFill', 'color', value)}/>
+        <RangeField label="Fill opacity" min={0} max={1} step={0.05} value={draft.symbology.buildingsFill.opacity} onChange={value => setField('buildingsFill', 'opacity', value)}/>
+        <ColorField label="Outline colour" value={draft.symbology.buildingsOutline.color} onChange={value => setField('buildingsOutline', 'color', value)}/>
+        <RangeField label="Outline width" min={0.2} max={4} step={0.1} value={draft.symbology.buildingsOutline.width} onChange={value => setField('buildingsOutline', 'width', value)}/>
+        <RangeField label="Visible from zoom" min={0} max={24} step={1} value={draft.zoomRanges.buildings.minZoom} onChange={value => setZoomField('buildings', 'minZoom', value)}/>
+        <RangeField label="Visible up to zoom" min={0} max={24} step={1} value={draft.zoomRanges.buildings.maxZoom} onChange={value => setZoomField('buildings', 'maxZoom', value)}/>
+      </>,
+    },
+  };
 
   return <section className="map-settings-panel">
     <div className="map-settings-head">
@@ -567,23 +639,19 @@ function AdminMapSettings({ workspace, mapConfig, onSaved, onClose }) {
     {(notice || error) && <div className={`admin-notice ${error ? 'is-error' : ''}`}>{error || notice}<button type="button" onClick={() => { setNotice(''); setError(''); }} aria-label="Dismiss notification"><X size={14}/></button></div>}
     <form onSubmit={save} className="map-settings-form">
       <div className="map-settings-row">
-        <label className="map-settings-toggle"><input type="checkbox" checked={draft.contextLayerDefaultOn} onChange={event => setDraft(current => ({ ...current, contextLayerDefaultOn: event.target.checked }))}/> Show parcels &amp; buildings by default</label>
-        <label className="map-settings-select">Layer order<select className="filter-select" value={orderValue} onChange={event => setDraft(current => ({ ...current, layerOrder: LAYER_ORDER_OPTIONS.find(option => option.value === event.target.value).order }))}>
-          {LAYER_ORDER_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
-        </select></label>
+        <label className="map-settings-toggle"><input type="checkbox" checked={draft.contextLayerDefaultOn} onChange={event => setDraft(current => ({ ...current, contextLayerDefaultOn: event.target.checked }))}/> Show map layers by default</label>
       </div>
       <div className="layer-list">
-        <LayerRow title="Parcels" swatches={[draft.symbology.parcels.color]} defaultOpen>
-          <ColorField label="Line colour" value={draft.symbology.parcels.color} onChange={value => setField('parcels', 'color', value)}/>
-          <RangeField label="Line width" min={0.2} max={4} step={0.1} value={draft.symbology.parcels.width} onChange={value => setField('parcels', 'width', value)}/>
-          <RangeField label="Opacity" min={0} max={1} step={0.05} value={draft.symbology.parcels.opacity} onChange={value => setField('parcels', 'opacity', value)}/>
-        </LayerRow>
-        <LayerRow title="Buildings" swatches={[draft.symbology.buildingsFill.color, draft.symbology.buildingsOutline.color]}>
-          <ColorField label="Fill colour" value={draft.symbology.buildingsFill.color} onChange={value => setField('buildingsFill', 'color', value)}/>
-          <RangeField label="Fill opacity" min={0} max={1} step={0.05} value={draft.symbology.buildingsFill.opacity} onChange={value => setField('buildingsFill', 'opacity', value)}/>
-          <ColorField label="Outline colour" value={draft.symbology.buildingsOutline.color} onChange={value => setField('buildingsOutline', 'color', value)}/>
-          <RangeField label="Outline width" min={0.2} max={4} step={0.1} value={draft.symbology.buildingsOutline.width} onChange={value => setField('buildingsOutline', 'width', value)}/>
-        </LayerRow>
+        <p className="layer-list-hint"><GripVertical size={12}/> Drag to set draw order — top layer sits above the rest</p>
+        {draft.layerOrder.map(key => {
+          const layer = orderableLayers[key];
+          if (!layer) return null;
+          return <LayerRow key={key} title={layer.title} swatches={layer.swatches} draggable dragging={dragKey === key}
+            onDragStart={() => setDragKey(key)}
+            onDragOver={event => { event.preventDefault(); reorderTo(key); }}
+            onDragEnd={() => setDragKey(null)}
+          >{layer.body}</LayerRow>;
+        })}
         <LayerRow title="Site markers" swatches={[draft.symbology.markers.new, draft.symbology.markers.accepted, draft.symbology.markers.dismissed]}>
           <ColorField label="New" value={draft.symbology.markers.new} onChange={value => setField('markers', 'new', value)}/>
           <ColorField label="Accepted" value={draft.symbology.markers.accepted} onChange={value => setField('markers', 'accepted', value)}/>

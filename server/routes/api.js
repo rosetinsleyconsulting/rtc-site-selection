@@ -12,7 +12,7 @@ const DEFAULT_MAP_CONFIG = {
   contextLayerDefaultOn: true,
   layerOrder: ['parcels', 'buildings'],
   symbology: {
-    parcels: { color: '#748894', width: 1, opacity: 0.55 },
+    parcels: { color: '#5E7A8C', width: 1, opacity: 0.6 },
     buildingsFill: { color: '#6F8443', opacity: 0.5 },
     buildingsOutline: { color: '#454E3A', width: 1 },
     markers: { new: '#A67C7C', accepted: '#517C78', dismissed: '#9D9D91' },

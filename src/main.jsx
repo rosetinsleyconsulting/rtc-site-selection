@@ -4,6 +4,7 @@ import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router-dom'
 import {
   ArrowRight,
   Check,
+  ChevronDown,
   ExternalLink,
   Layers3,
   List,
@@ -37,13 +38,13 @@ import '../index.css';
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-const tileServerUrl = import.meta.env.VITE_TILE_SERVER_URL?.replace(/\/+$/, '');
+const tileServerUrl = import.meta.env.TILE_SERVER_URL?.replace(/\/+$/, '');
 const CONTEXT_LAYER_IDS = ['context-parcels', 'context-buildings-fill', 'context-buildings-outline'];
 const FALLBACK_MAP_CONFIG = {
   contextLayerDefaultOn: true,
   layerOrder: ['parcels', 'buildings'],
   symbology: {
-    parcels: { color: '#748894', width: 1, opacity: 0.55 },
+    parcels: { color: '#5E7A8C', width: 1, opacity: 0.6 },
     buildingsFill: { color: '#6F8443', opacity: 0.5 },
     buildingsOutline: { color: '#454E3A', width: 1 },
     markers: { new: '#A67C7C', accepted: '#517C78', dismissed: '#9D9D91' },
@@ -422,8 +423,8 @@ function MapPanel({ sites, selected, onSelect, mapConfig }) {
         const contextVisibility = contextLayerOn ? 'visible' : 'none';
         const { parcels, buildingsFill, buildingsOutline } = config.symbology;
         const addParcels = () => {
-          map.addSource('lowlu-parcels', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_parcels/{z}/{x}/{y}`] });
-          map.addLayer({ id: 'context-parcels', type: 'line', source: 'lowlu-parcels', 'source-layer': 'lowlu_final_parcels', layout: { visibility: contextVisibility }, paint: { 'line-color': parcels.color, 'line-width': parcels.width, 'line-opacity': parcels.opacity } });
+          map.addSource('inspire-parcels', { type: 'vector', tiles: [`${tileServerUrl}/inspire_parcels/{z}/{x}/{y}`] });
+          map.addLayer({ id: 'context-parcels', type: 'line', source: 'inspire-parcels', 'source-layer': 'inspire_parcels', layout: { visibility: contextVisibility }, paint: { 'line-color': parcels.color, 'line-width': parcels.width, 'line-opacity': parcels.opacity } });
         };
         const addBuildings = () => {
           map.addSource('lowlu-buildings', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_buildings/{z}/{x}/{y}`] });
@@ -508,11 +509,23 @@ function MapPanel({ sites, selected, onSelect, mapConfig }) {
 }
 
 function ColorField({ label, value, onChange }) {
-  return <label className="color-field">{label}<span className="color-field-input"><input type="color" value={value} onChange={event => onChange(event.target.value)}/><input type="text" value={value} maxLength={7} onChange={event => onChange(event.target.value)}/></span></label>;
+  return <label className="color-field">{label}<span className="color-field-input"><input type="color" value={value} onChange={event => onChange(event.target.value)} aria-label={`${label} colour`}/><span className="color-field-hex">{value.toUpperCase()}</span></span></label>;
 }
 
 function RangeField({ label, value, onChange, min, max, step }) {
   return <label className="range-field">{label}<span className="range-field-input"><input type="range" min={min} max={max} step={step} value={value} onChange={event => onChange(Number(event.target.value))}/><span>{value}</span></span></label>;
+}
+
+function LayerRow({ title, swatches, defaultOpen, children }) {
+  const [open, setOpen] = useState(Boolean(defaultOpen));
+  return <div className={`layer-row ${open ? 'open' : ''}`}>
+    <button type="button" className="layer-row-head" onClick={() => setOpen(current => !current)} aria-expanded={open}>
+      <span className="layer-row-swatches">{swatches.map((color, index) => <i key={index} className="layer-swatch" style={{ background: color }}/>)}</span>
+      <span className="layer-row-title">{title}</span>
+      <ChevronDown size={15} className="layer-row-chevron"/>
+    </button>
+    {open && <div className="layer-row-body">{children}</div>}
+  </div>;
 }
 
 function AdminMapSettings({ workspace, mapConfig, onSaved, onClose }) {
@@ -559,26 +572,23 @@ function AdminMapSettings({ workspace, mapConfig, onSaved, onClose }) {
           {LAYER_ORDER_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
         </select></label>
       </div>
-      <div className="map-settings-grid">
-        <fieldset>
-          <legend>Parcel outlines</legend>
+      <div className="layer-list">
+        <LayerRow title="Parcels" swatches={[draft.symbology.parcels.color]} defaultOpen>
           <ColorField label="Line colour" value={draft.symbology.parcels.color} onChange={value => setField('parcels', 'color', value)}/>
           <RangeField label="Line width" min={0.2} max={4} step={0.1} value={draft.symbology.parcels.width} onChange={value => setField('parcels', 'width', value)}/>
           <RangeField label="Opacity" min={0} max={1} step={0.05} value={draft.symbology.parcels.opacity} onChange={value => setField('parcels', 'opacity', value)}/>
-        </fieldset>
-        <fieldset>
-          <legend>Buildings</legend>
+        </LayerRow>
+        <LayerRow title="Buildings" swatches={[draft.symbology.buildingsFill.color, draft.symbology.buildingsOutline.color]}>
           <ColorField label="Fill colour" value={draft.symbology.buildingsFill.color} onChange={value => setField('buildingsFill', 'color', value)}/>
           <RangeField label="Fill opacity" min={0} max={1} step={0.05} value={draft.symbology.buildingsFill.opacity} onChange={value => setField('buildingsFill', 'opacity', value)}/>
           <ColorField label="Outline colour" value={draft.symbology.buildingsOutline.color} onChange={value => setField('buildingsOutline', 'color', value)}/>
           <RangeField label="Outline width" min={0.2} max={4} step={0.1} value={draft.symbology.buildingsOutline.width} onChange={value => setField('buildingsOutline', 'width', value)}/>
-        </fieldset>
-        <fieldset>
-          <legend>Site markers</legend>
+        </LayerRow>
+        <LayerRow title="Site markers" swatches={[draft.symbology.markers.new, draft.symbology.markers.accepted, draft.symbology.markers.dismissed]}>
           <ColorField label="New" value={draft.symbology.markers.new} onChange={value => setField('markers', 'new', value)}/>
           <ColorField label="Accepted" value={draft.symbology.markers.accepted} onChange={value => setField('markers', 'accepted', value)}/>
           <ColorField label="Dismissed" value={draft.symbology.markers.dismissed} onChange={value => setField('markers', 'dismissed', value)}/>
-        </fieldset>
+        </LayerRow>
       </div>
       <div className="map-settings-actions">
         <button type="button" className="decision" onClick={() => setDraft(mapConfig)} disabled={busy}>Discard changes</button>

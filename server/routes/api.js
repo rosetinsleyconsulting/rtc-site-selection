@@ -368,12 +368,21 @@ router.post('/admin/users/invite', requirePlatformAdmin, async (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Provide a valid email address' });
   if (!clerkClient) return res.status(503).json({ error: 'Clerk is not configured' });
 
+  let workspaceId = null;
+  if (req.body?.workspaceId !== undefined && req.body?.workspaceId !== null && req.body?.workspaceId !== '') {
+    workspaceId = Number(req.body.workspaceId);
+    if (!Number.isInteger(workspaceId)) return res.status(400).json({ error: 'Invalid workspace id' });
+    const workspaceExists = await req.app.locals.db.execute(sql`SELECT 1 FROM workspaces WHERE id = ${workspaceId} LIMIT 1`);
+    if (!workspaceExists.rows.length) return res.status(404).json({ error: 'Workspace not found' });
+  }
+
   try {
     const invitation = await clerkClient.invitations.createInvitation({
       emailAddress: email,
       redirectUrl: '/sign-up',
+      publicMetadata: workspaceId ? { invitedWorkspaceId: workspaceId } : undefined,
     });
-    res.status(201).json({ invitationId: invitation.id, email });
+    res.status(201).json({ invitationId: invitation.id, email, workspaceId });
   } catch (error) {
     console.error('Invitation failed:', error);
     res.status(502).json({ error: 'Unable to send invitation' });

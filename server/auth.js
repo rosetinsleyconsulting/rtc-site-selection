@@ -38,8 +38,19 @@ export async function ensureLocalUser(db, userId) {
       is_platform_admin = users.is_platform_admin OR EXCLUDED.is_platform_admin
     RETURNING id, clerk_user_id AS "clerkUserId", email, name, is_platform_admin AS "isPlatformAdmin"
   `);
+  const localUser = result.rows[0];
 
-  return result.rows[0];
+  const invitedWorkspaceId = clerkUser.publicMetadata?.invitedWorkspaceId;
+  if (Number.isInteger(invitedWorkspaceId) && invitedWorkspaceId > 0) {
+    await db.execute(sql`
+      INSERT INTO memberships (user_id, workspace_id)
+      VALUES (${localUser.id}, ${invitedWorkspaceId})
+      ON CONFLICT DO NOTHING
+    `);
+    await clerkClient.users.updateUserMetadata(userId, { publicMetadata: { invitedWorkspaceId: null } });
+  }
+
+  return localUser;
 }
 
 export async function requireUser(req, res, next) {

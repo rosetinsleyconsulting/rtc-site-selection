@@ -718,6 +718,7 @@ function AdminOverview() {
   const [section, setSection] = useState('clients');
   const [form, setForm] = useState({ name: '', slug: '', csvText: '' });
   const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteWorkspaceId, setInviteWorkspaceId] = useState('');
   const [fileName, setFileName] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -773,9 +774,12 @@ function AdminOverview() {
     event.preventDefault();
     setBusy('invite');
     try {
-      await api('/api/admin/users/invite', { method: 'POST', body: JSON.stringify({ email: inviteEmail }) });
+      const workspaceId = inviteWorkspaceId ? Number(inviteWorkspaceId) : null;
+      await api('/api/admin/users/invite', { method: 'POST', body: JSON.stringify({ email: inviteEmail, workspaceId }) });
       setInviteEmail('');
-      setNotice('Invitation sent. The recipient will land on the sign-up route.');
+      setInviteWorkspaceId('');
+      const grantedWorkspace = workspaces.find(item => item.id === workspaceId);
+      setNotice(grantedWorkspace ? `Invitation sent — they'll have access to ${grantedWorkspace.name} as soon as they sign up.` : 'Invitation sent. The recipient will land on the sign-up route.');
     } catch (inviteError) { setError(inviteError.message); } finally { setBusy(''); }
   };
   const readFile = event => {
@@ -814,7 +818,7 @@ function AdminOverview() {
         <section className="admin-card create-card"><div className="admin-card-kicker">New client</div><h2>Create a workspace</h2><p>Import a separate site shortlist for a client. Their data will be isolated from every other workspace.</p><form onSubmit={createWorkspace}><label>Workspace name<input required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Example: Acme Property Group"/></label><label>Workspace slug<input required value={form.slug} onChange={event => setForm({ ...form, slug: event.target.value })} placeholder="acme-property-group"/></label><label>Site shortlist CSV<textarea required value={form.csvText} onChange={event => setForm({ ...form, csvText: event.target.value })} placeholder="Paste the CSV export here, or upload it below." rows={6}/></label><label className="file-input">Upload CSV<input type="file" accept=".csv,text/csv" onChange={readFile}/><span>{fileName || 'Choose a file'}</span></label><button className="decision accept" disabled={busy === 'workspace'}>{busy === 'workspace' ? <LoaderCircle className="spin" size={13}/> : <ArrowRight size={13}/>} Create workspace</button></form></section>
         <section className="admin-card"><div className="admin-card-kicker">Client workspaces</div><h2>{workspaces.length} workspaces</h2><div className="workspace-table">{workspaces.map(workspace => <div className="workspace-row" key={workspace.id}><div><strong>{workspace.name}</strong><span>/{workspace.slug}</span></div><div className="row-metrics"><span>{workspace.site_count} sites</span><span>{workspace.member_count} members</span><Link className="quiet-link" to={`/workspace/${workspace.id}`}>View shortlist <ArrowRight size={12}/></Link></div></div>)}{!workspaces.length && <div className="admin-empty">Create the first workspace to begin.</div>}</div></section>
       </div> : <div className="admin-grid">
-        <section className="admin-card invite-card"><div className="admin-card-kicker">Access</div><h2>Invite a user</h2><p>Send a Clerk invitation that routes through the dedicated sign-up page.</p><form onSubmit={invite} className="invite-form"><input required type="email" value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} placeholder="name@company.com"/><button className="decision accept" disabled={busy === 'invite'}>{busy === 'invite' ? <LoaderCircle className="spin" size={13}/> : <Users size={13}/>} Send invite</button></form></section>
+        <section className="admin-card invite-card"><div className="admin-card-kicker">Access</div><h2>Invite a user</h2><p>Send a Clerk invitation that routes through the dedicated sign-up page. Pick a workspace to grant them instant access to it as soon as they sign up.</p><form onSubmit={invite} className="invite-form"><input required type="email" value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} placeholder="name@company.com"/><select className="filter-select" value={inviteWorkspaceId} onChange={event => setInviteWorkspaceId(event.target.value)}><option value="">No workspace (platform only)</option>{workspaces.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select><button className="decision accept" disabled={busy === 'invite'}>{busy === 'invite' ? <LoaderCircle className="spin" size={13}/> : <Users size={13}/>} Send invite</button></form></section>
         <section className="admin-card users-card"><div className="admin-card-kicker">People</div><h2>{users.length} local users</h2><div className="users-list">{users.map(user => <UserRow key={user.id} user={user} workspaces={workspaces} busy={busy} onToggleAdmin={isPlatformAdmin => updateUser(user.id, { isPlatformAdmin }, `${user.email} admin access updated.`)} onToggleMembership={toggleMembership}/>) }{!users.length && <div className="admin-empty">Users appear here after their first authenticated request.</div>}</div></section>
       </div>}
     </main>

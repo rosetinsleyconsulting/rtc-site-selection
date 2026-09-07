@@ -81,7 +81,7 @@ function validateMapConfig(input) {
   const buildingsMinZoom = clampNumber(zoomRanges.buildings?.minZoom, 0, 24);
   const buildingsMaxZoom = clampNumber(zoomRanges.buildings?.maxZoom, 0, 24);
   if ([parcelsMinZoom, parcelsMaxZoom, buildingsMinZoom, buildingsMaxZoom].some(value => value === null)) return null;
-  if (parcelsMinZoom > parcelsMaxZoom || buildingsMinZoom > buildingsMaxZoom) return null;
+  if (parcelsMinZoom >= parcelsMaxZoom || buildingsMinZoom >= buildingsMaxZoom) return null;
 
   return {
     contextLayerDefaultOn: Boolean(input.contextLayerDefaultOn),
@@ -191,6 +191,7 @@ router.get('/workspaces/:workspaceId/sites', async (req, res) => {
       s.nearby_parking,
       s.data_confidence_notes,
       s.spare_area_comments,
+      s.review_flag,
       s.lat,
       s.lon,
       COALESCE(ss.status, 'new') AS status

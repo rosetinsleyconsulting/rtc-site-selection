@@ -59,6 +59,7 @@ export const sites = pgTable('sites', {
   nearbyParking: text('nearby_parking'),
   dataConfidenceNotes: text('data_confidence_notes'),
   spareAreaComments: text('spare_area_comments'),
+  reviewFlag: text('review_flag'),
   lat: doublePrecision('lat'),
   lon: doublePrecision('lon'),
 });

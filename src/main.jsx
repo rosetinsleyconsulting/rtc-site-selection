@@ -67,11 +67,15 @@ const area = value => {
   const parsed = numberValue(value);
   return parsed === null ? 'Not recorded' : `${parsed.toLocaleString('en-GB', { maximumFractionDigits: 0 })} m²`;
 };
-const money = value => {
-  const parsed = numberValue(value);
-  return parsed === null ? 'Not available' : `£${parsed.toLocaleString('en-GB')}`;
-};
 const normalize = value => (value || '').toLowerCase();
+const REVIEW_FLAG_COLORS = {
+  'Good Candidate': '#6F8443',
+  'Public Park Caution': '#C9A227',
+  'Limited/Shared Space': '#8C7851',
+  'False Positive': '#B33A3A',
+  'No Usable Space': '#6B6B6B',
+};
+const reviewFlagColor = flag => REVIEW_FLAG_COLORS[flag] || '#999999';
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -235,6 +239,8 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
   const [query, setQuery] = useState('');
   const [borough, setBorough] = useState('All boroughs');
   const [category, setCategory] = useState('All categories');
+  const [reviewFlag, setReviewFlag] = useState('All flags');
+  const [sortOrder, setSortOrder] = useState('default');
   const [selectedId, setSelectedId] = useState(null);
   const [view, setView] = useState('split');
   const [loading, setLoading] = useState(true);
@@ -273,12 +279,18 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
 
   const boroughs = useMemo(() => [...new Set(sites.map(site => site.borough).filter(Boolean))].sort(), [sites]);
   const categories = useMemo(() => [...new Set(sites.map(site => site.category).filter(Boolean))].sort(), [sites]);
-  const filtered = useMemo(() => sites.filter(site =>
-    (statusFilter === 'all' || site.status === statusFilter)
-    && (borough === 'All boroughs' || site.borough === borough)
-    && (category === 'All categories' || site.category === category)
-    && (!query || normalize(`${site.site_name} ${site.borough} ${site.category}`).includes(normalize(query)))
-  ), [sites, statusFilter, borough, category, query]);
+  const reviewFlags = useMemo(() => [...new Set(sites.map(site => site.review_flag).filter(Boolean))].sort(), [sites]);
+  const filtered = useMemo(() => {
+    const result = sites.filter(site =>
+      (statusFilter === 'all' || site.status === statusFilter)
+      && (borough === 'All boroughs' || site.borough === borough)
+      && (category === 'All categories' || site.category === category)
+      && (reviewFlag === 'All flags' || site.review_flag === reviewFlag)
+      && (!query || normalize(`${site.site_name} ${site.borough} ${site.category}`).includes(normalize(query)))
+    );
+    if (sortOrder === 'az') result.sort((a, b) => a.site_name.localeCompare(b.site_name));
+    return result;
+  }, [sites, statusFilter, borough, category, reviewFlag, query, sortOrder]);
   const selected = filtered.find(site => site.id === selectedId) || filtered[0] || null;
   const counts = {
     all: sites.length,
@@ -324,6 +336,14 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
         <div className="side-label">Site category</div>
         <select className="filter-select" value={category} onChange={event => setCategory(event.target.value)}><option>All categories</option>{categories.map(item => <option key={item}>{item}</option>)}</select>
       </div>
+      {reviewFlags.length > 0 && <div className="filter-block">
+        <div className="side-label">Review flag</div>
+        <select className="filter-select" value={reviewFlag} onChange={event => setReviewFlag(event.target.value)}><option>All flags</option>{reviewFlags.map(item => <option key={item}>{item}</option>)}</select>
+      </div>}
+      <div className="filter-block">
+        <div className="side-label">Sort by</div>
+        <select className="filter-select" value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="default">Default order</option><option value="az">Name (A–Z)</option></select>
+      </div>
       <div className="side-footer"><div className="signature">Prepared for {workspace.name}<br/>ROSE TINSLEY Consulting</div><div className="side-account"><UserButton afterSignOutUrl="/sign-in"/></div>{profile.isPlatformAdmin && <Link className="admin-link" to="/admin"><ShieldCheck size={13}/> Back to admin overview</Link>}</div>
     </aside>
     <main className="main">
@@ -356,7 +376,12 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
           <div className="site-list">{filtered.length ? filtered.map(site => <button className={`site-card ${selected?.id === site.id ? 'selected' : ''}`} key={site.id} onClick={() => setSelectedId(site.id)}>
             <div className="card-top"><div className="site-title">{site.site_name}</div><span className={`badge badge-${site.status}`}>{site.status}</span></div>
             <div className="site-meta">{site.borough} · {site.category}</div>
-            <div className="card-bottom"><span><strong>{area(site.footprint_m2)}</strong> footprint</span><span><strong>{area(site.spare_land_on_title_m2)}</strong> spare title</span></div>
+            <div className="card-bottom">
+              <span><strong>{area(site.footprint_m2)}</strong> footprint</span>
+              {site.review_flag
+                ? <span><i className="legend-dot" style={{ background: reviewFlagColor(site.review_flag) }}/>{site.review_flag}</span>
+                : <span><strong>{area(site.spare_land_on_title_m2)}</strong> spare title</span>}
+            </div>
           </button>) : <div className="empty"><h2>No sites match</h2><p>Try clearing a filter or searching a different part of the shortlist.</p></div>}</div>
         </section>}
         {view === 'map'
@@ -571,7 +596,8 @@ function AdminMapSettings({ workspace, mapConfig, onSaved, onClose }) {
 
   const setZoomField = (layerKey, field, value) => setDraft(current => {
     const range = { ...current.zoomRanges[layerKey], [field]: value };
-    if (range.minZoom > range.maxZoom) range[field === 'minZoom' ? 'maxZoom' : 'minZoom'] = value;
+    if (field === 'minZoom' && range.minZoom >= range.maxZoom) range.maxZoom = Math.min(24, range.minZoom + 1);
+    if (field === 'maxZoom' && range.maxZoom <= range.minZoom) range.minZoom = Math.max(0, range.maxZoom - 1);
     return { ...current, zoomRanges: { ...current.zoomRanges, [layerKey]: range } };
   });
 
@@ -667,7 +693,6 @@ function AdminMapSettings({ workspace, mapConfig, onSaved, onClose }) {
 }
 
 function Detail({ site, onStatus }) {
-  const confidence = site.voa_match_confidence && site.voa_match_confidence !== 'no match' ? 78 : 22;
   const siteQuery = encodeURIComponent(`${site.site_name}, ${site.borough}, London`);
   return <section className="detail-panel"><div className="detail-head">
       <div className="detail-head-top">
@@ -682,12 +707,8 @@ function Detail({ site, onStatus }) {
         </div>
       </div>
     </div>
-    <div className="detail-body"><div className="detail-grid"><div className="detail-stat"><label>Footprint</label><span>{area(site.footprint_m2)}</span></div><div className="detail-stat"><label>Spare land on title</label><span>{area(site.spare_land_on_title_m2)}</span></div><div className="detail-stat"><label>VOA rateable value</label><span>{money(site.voa_rateable_value)}</span></div><div className="detail-stat"><label>Nearby parking</label><span>{site.nearby_parking || 'Not recorded'}</span></div></div>
-      <div className="detail-section detail-flag-row">
-        <div className="detail-flag"><h3>VOA match confidence</h3><p>{site.voa_match_confidence || 'No match recorded'}</p><div className="confidence"><i style={{ width: `${confidence}%` }}/></div></div>
-        <div className="detail-flag"><h3>Planning context</h3><p>{site.nearby_planning_applications || 'No planning information recorded.'}</p></div>
-      </div>
-      {(site.data_confidence_notes || site.spare_area_comments) && <div className="detail-section"><h3>Field notes</h3><p>{site.data_confidence_notes || site.spare_area_comments}</p>{site.data_confidence_notes && site.spare_area_comments && <p style={{ marginTop: 8 }}>{site.spare_area_comments}</p>}</div>}
+    <div className="detail-body"><div className="detail-grid"><div className="detail-stat"><label>Footprint</label><span>{area(site.footprint_m2)}</span></div><div className="detail-stat"><label>Data confidence</label><span>{site.data_confidence_notes || 'Not recorded'}</span></div></div>
+      {site.spare_area_comments && <div className="detail-section"><h3>Field notes</h3><p>{site.spare_area_comments}</p></div>}
     </div></section>;
 }
 

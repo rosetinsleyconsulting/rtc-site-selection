@@ -379,7 +379,7 @@ router.post('/admin/users/invite', requirePlatformAdmin, async (req, res) => {
   try {
     const invitation = await clerkClient.invitations.createInvitation({
       emailAddress: email,
-      redirectUrl: '/sign-up',
+      redirectUrl: `https://${req.get('host')}/sign-up`,
       publicMetadata: workspaceId ? { invitedWorkspaceId: workspaceId } : undefined,
     });
     res.status(201).json({ invitationId: invitation.id, email, workspaceId });

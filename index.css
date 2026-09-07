@@ -235,6 +235,8 @@ h1 { margin: 8px 0 5px; font: 500 clamp(30px, 4vw, 52px)/.98 var(--font-display)
 .center-card .decision { margin-top: 8px; }
 .inline-link { display: inline-flex; align-items: center; gap: 7px; text-decoration: none; }
 .center-signature { margin-top: 35px; color: var(--moss); font-size: 9px; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
+.center-account { display: flex; align-items: center; gap: 11px; margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
+.center-account span { color: var(--muted); font: 11px/1.4 var(--font-ui); }
 .config-mark { margin-bottom: 50px; color: var(--forest); font: 500 34px/1 var(--font-display); letter-spacing: -.04em; }
 .config-note { padding-top: 17px; border-top: 1px solid var(--line); font: 12px/1.6 var(--font-ui) !important; }
 .spin { animation: spin 1s linear infinite; }

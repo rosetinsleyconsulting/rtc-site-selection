@@ -230,7 +230,7 @@ function ErrorScreen({ message, onRetry }) {
 }
 
 function NoAccessState() {
-  return <div className="center-screen"><div className="center-card"><div className="eyebrow">Private shortlist workspace</div><h1>No workspace access yet.</h1><p>Your account is active, but an administrator has not granted access to a client workspace.</p><div className="center-signature">ROSE TINSLEY Consulting</div></div></div>;
+  return <div className="center-screen"><div className="center-card"><div className="eyebrow">Private shortlist workspace</div><h1>No workspace access yet.</h1><p>Your account is active, but an administrator has not granted access to a client workspace.</p><div className="center-account"><UserButton afterSignOutUrl="/sign-in"/><span>Signed in — switch account or sign out</span></div><div className="center-signature">ROSE TINSLEY Consulting</div></div></div>;
 }
 
 function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange }) {

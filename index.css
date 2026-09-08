@@ -292,8 +292,10 @@ h1 { margin: 8px 0 5px; font: 500 clamp(30px, 4vw, 52px)/.98 var(--font-display)
 .row-metrics { display: flex; gap: 10px; }
 .row-metrics span { margin: 0; padding: 5px 7px; border-radius: 3px; background: var(--mist); color: var(--forest); font-size: 9px; font-weight: 800; }
 .invite-card { align-self: start; }
-.invite-form { display: flex !important; align-items: center; grid-template-columns: 1fr auto !important; }
-.invite-form input { flex: 1; }
+.invite-form { display: flex !important; align-items: center; gap: 10px; }
+.invite-form input { flex: 1 1 auto; min-width: 0; }
+.invite-form .filter-select { flex: 0 0 auto; width: auto; min-width: 150px; }
+.invite-form button { flex: 0 0 auto; }
 .admin-notice { display: flex; justify-content: space-between; gap: 15px; max-width: 1260px; margin: -20px auto 22px; padding: 12px 15px; border: 1px solid #bfd1b9; border-radius: 4px; background: #e4efe0; color: #47634f; font-size: 11px; }
 .admin-notice.is-error { border-color: #e4c5bf; background: #f5e4df; color: #805d58; }
 .admin-notice button { border: 0; background: transparent; color: inherit; }

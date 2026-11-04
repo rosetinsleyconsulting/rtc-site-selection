@@ -12,6 +12,8 @@ const appraisalStatuses = new Set(['requested', 'in_progress', 'delivered', 'can
 // Martin is only reachable inside Galahad (loopback, or the rtc-tiles Docker network from the container)
 const MARTIN_URL = (process.env.MARTIN_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
 const layerRoles = new Set(['parcels', 'buildings']);
+// Drizzle wraps driver errors, so the Postgres code may sit on error.cause
+const isUniqueViolation = error => (error?.code || error?.cause?.code) === '23505';
 // Placeholder price (3 Nov 2026), not yet agreed. One place to change it; requests store the price they were made at.
 const APPRAISAL_OFFER = { pricePence: 20000, vat: 'plus VAT' };
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
@@ -252,7 +254,7 @@ router.post('/workspaces/:workspaceId/sites/:siteId/appraisal-requests', apprais
     // TODO: email RTC (hello@) about the new request once the app can send mail.
     res.status(201).json({ request });
   } catch (error) {
-    if (error.code === '23505') return res.status(409).json({ error: 'An appraisal has already been requested for this site' });
+    if (isUniqueViolation(error)) return res.status(409).json({ error: 'An appraisal has already been requested for this site' });
     console.error('Appraisal request failed:', error);
     res.status(500).json({ error: 'Unable to request an appraisal' });
   }
@@ -445,7 +447,7 @@ router.post('/admin/workspaces', requirePlatformAdmin, async (req, res) => {
     });
     res.status(201).json({ workspace });
   } catch (error) {
-    if (error.code === '23505') return res.status(409).json({ error: 'That workspace slug already exists' });
+    if (isUniqueViolation(error)) return res.status(409).json({ error: 'That workspace slug already exists' });
     console.error('Workspace creation failed:', error);
     res.status(500).json({ error: 'Unable to create workspace' });
   }
@@ -481,7 +483,7 @@ router.patch('/admin/appraisal-requests/:requestId', requirePlatformAdmin, async
     if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
     res.json({ request: result.rows[0] });
   } catch (error) {
-    if (error.code === '23505') return res.status(409).json({ error: 'This site already has another open request' });
+    if (isUniqueViolation(error)) return res.status(409).json({ error: 'This site already has another open request' });
     console.error('Appraisal status update failed:', error);
     res.status(500).json({ error: 'Unable to update the request' });
   }

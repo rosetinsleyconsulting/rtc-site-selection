@@ -1,0 +1,22 @@
+# Production deploy on Galahad. Reads .env from this folder for both build args and runtime.
+# Exposed on loopback only; public access goes through the Cloudflare Tunnel.
+name: rtc-site-selection
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+        TILE_SERVER_URL: ${TILE_SERVER_URL}
+    image: rtc-site-selection:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5010:5000"
+    environment:
+      PORT: 5000
+      # Galahad's native Postgres, reached from inside the container via the host gateway
+      DATABASE_URL: ${DOCKER_DATABASE_URL}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}

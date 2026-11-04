@@ -1,6 +1,8 @@
+import { sql } from 'drizzle-orm';
 import {
   boolean,
   doublePrecision,
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -10,20 +12,28 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  uuid,
 } from 'drizzle-orm/pg-core';
 
 export const siteStatusEnum = pgEnum('site_status', ['new', 'accepted', 'dismissed']);
+export const appraisalStatusEnum = pgEnum('appraisal_status', ['requested', 'in_progress', 'delivered', 'cancelled']);
 
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
-  clerkUserId: text('clerk_user_id').notNull(),
+  supabaseUserId: uuid('supabase_user_id').notNull(),
   email: text('email').notNull(),
   name: text('name').notNull().default(''),
   isPlatformAdmin: boolean('is_platform_admin').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, table => ({
-  clerkUserIdUnique: uniqueIndex('users_clerk_user_id_idx').on(table.clerkUserId),
+  supabaseUserIdUnique: uniqueIndex('users_supabase_user_id_idx').on(table.supabaseUserId),
 }));
+
+export const pendingInvites = pgTable('pending_invites', {
+  email: text('email').primaryKey(),
+  workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const workspaces = pgTable('workspaces', {
   id: serial('id').primaryKey(),
@@ -63,6 +73,23 @@ export const sites = pgTable('sites', {
   lat: doublePrecision('lat'),
   lon: doublePrecision('lon'),
 });
+
+export const appraisalRequests = pgTable('appraisal_requests', {
+  id: serial('id').primaryKey(),
+  workspaceId: integer('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  requestedBy: integer('requested_by').notNull().references(() => users.id),
+  status: appraisalStatusEnum('status').notNull().default('requested'),
+  // Captured at request time so later price changes don't rewrite old requests
+  pricePence: integer('price_pence').notNull(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, table => ({
+  // At most one open request per site
+  openSiteUnique: uniqueIndex('appraisal_requests_open_site_idx').on(table.siteId).where(sql`status IN ('requested', 'in_progress')`),
+  workspaceIdx: index('appraisal_requests_workspace_idx').on(table.workspaceId),
+}));
 
 export const siteStatuses = pgTable('site_statuses', {
   siteId: integer('site_id').primaryKey().references(() => sites.id, { onDelete: 'cascade' }),

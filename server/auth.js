@@ -1,71 +1,59 @@
-import { createClerkClient } from '@clerk/backend';
-import { getAuth } from '@clerk/express';
 import { sql } from 'drizzle-orm';
-
-const secretKey = process.env.CLERK_SECRET_KEY;
-export const publishableKey = process.env.CLERK_PUBLISHABLE_KEY || process.env.VITE_CLERK_PUBLISHABLE_KEY;
-export const clerkConfigured = Boolean(secretKey && publishableKey);
-export const clerkClient = clerkConfigured ? createClerkClient({ secretKey, publishableKey }) : null;
+import { supabaseAdmin, supabaseConfigured } from './supabase.js';
 
 const configuredAdminEmails = (process.env.PLATFORM_ADMIN_EMAILS || 'eilish@rosetinsleyconsulting.com')
   .split(',')
   .map(email => email.trim().toLowerCase())
   .filter(Boolean);
 
-function clerkEmail(clerkUser) {
-  return clerkUser.primaryEmailAddress?.emailAddress
-    || clerkUser.emailAddresses?.[0]?.emailAddress
-    || '';
-}
-
-function clerkName(clerkUser) {
-  return [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ').trim();
-}
-
-export async function ensureLocalUser(db, userId) {
-  const clerkUser = await clerkClient.users.getUser(userId);
-  const email = clerkEmail(clerkUser).toLowerCase();
-  const name = clerkName(clerkUser);
+export async function ensureLocalUser(db, supabaseUser) {
+  const email = (supabaseUser.email || '').toLowerCase();
+  const name = supabaseUser.user_metadata?.name || '';
   const shouldBeAdmin = configuredAdminEmails.includes(email);
 
   const result = await db.execute(sql`
-    INSERT INTO users (clerk_user_id, email, name, is_platform_admin)
-    VALUES (${userId}, ${email}, ${name}, ${shouldBeAdmin})
-    ON CONFLICT (clerk_user_id)
+    INSERT INTO users (supabase_user_id, email, name, is_platform_admin)
+    VALUES (${supabaseUser.id}, ${email}, ${name}, ${shouldBeAdmin})
+    ON CONFLICT (supabase_user_id)
     DO UPDATE SET
       email = EXCLUDED.email,
       name = EXCLUDED.name,
       is_platform_admin = users.is_platform_admin OR EXCLUDED.is_platform_admin
-    RETURNING id, clerk_user_id AS "clerkUserId", email, name, is_platform_admin AS "isPlatformAdmin"
+    RETURNING id, supabase_user_id AS "supabaseUserId", email, name, is_platform_admin AS "isPlatformAdmin"
   `);
   const localUser = result.rows[0];
 
-  const invitedWorkspaceId = clerkUser.publicMetadata?.invitedWorkspaceId;
-  if (Number.isInteger(invitedWorkspaceId) && invitedWorkspaceId > 0) {
+  const pending = await db.execute(sql`
+    DELETE FROM pending_invites WHERE email = ${email} RETURNING workspace_id
+  `);
+  const invitedWorkspaceId = pending.rows[0]?.workspace_id;
+  if (Number.isInteger(invitedWorkspaceId)) {
     await db.execute(sql`
       INSERT INTO memberships (user_id, workspace_id)
       VALUES (${localUser.id}, ${invitedWorkspaceId})
       ON CONFLICT DO NOTHING
     `);
-    await clerkClient.users.updateUserMetadata(userId, { publicMetadata: { invitedWorkspaceId: null } });
   }
 
   return localUser;
 }
 
 export async function requireUser(req, res, next) {
-  if (!clerkConfigured) {
+  if (!supabaseConfigured) {
     return res.status(503).json({
-      error: 'Clerk is not configured',
-      message: 'Add CLERK_SECRET_KEY and VITE_CLERK_PUBLISHABLE_KEY to enable authentication.',
+      error: 'Supabase is not configured',
+      message: 'Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to enable authentication.',
     });
   }
 
-  const { userId } = getAuth(req);
-  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const authHeader = req.get('authorization') || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    req.localUser = await ensureLocalUser(req.app.locals.db, userId);
+    const { data, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !data?.user) return res.status(401).json({ error: 'Unauthorized' });
+    req.localUser = await ensureLocalUser(req.app.locals.db, data.user);
     return next();
   } catch (error) {
     console.error('Unable to provision local user:', error);

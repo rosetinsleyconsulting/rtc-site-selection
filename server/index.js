@@ -1,11 +1,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import { db, pool } from './db/index.js';
-import { clerkMiddleware } from '@clerk/express';
 import apiRouter from './routes/api.js';
-import { clerkConfigured, clerkClient, publishableKey } from './auth.js';
+import { supabaseConfigured } from './supabase.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -13,24 +11,20 @@ const app = express();
 const port = Number(process.env.PORT || 5000);
 
 app.locals.db = db;
+// Behind Cloudflare Tunnel: read the real protocol (https) from X-Forwarded-Proto, used when building invite links
+app.set('trust proxy', true);
 app.use(express.json({ limit: '12mb' }));
 
-if (clerkConfigured) {
-  app.use(clerkMiddleware({
-    clerkClient,
-    secretKey: process.env.CLERK_SECRET_KEY,
-    publishableKey,
-  }));
-} else {
-  console.warn('Clerk is not configured. Add CLERK_SECRET_KEY and VITE_CLERK_PUBLISHABLE_KEY before using protected routes.');
+if (!supabaseConfigured) {
+  console.warn('Supabase is not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before using protected routes.');
 }
 
 app.get('/api/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
-    res.json({ ok: true, clerkConfigured });
+    res.json({ ok: true, supabaseConfigured });
   } catch {
-    res.status(503).json({ ok: false, clerkConfigured, error: 'Database unavailable' });
+    res.status(503).json({ ok: false, supabaseConfigured, error: 'Database unavailable' });
   }
 });
 app.use('/api', apiRouter);
@@ -43,6 +37,8 @@ if (process.env.NODE_ENV === 'production') {
   });
   app.listen(port, '0.0.0.0', () => console.log(`Site selection server listening on ${port}`));
 } else {
+  // Loaded lazily so the production image doesn't need Vite (a devDependency) installed
+  const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
     root,
     server: { middlewareMode: true },

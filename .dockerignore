@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.env
+.env.*
+.agents
+.claude
+.codex
+.impeccable
+attached_assets
+screenshots
+claude-user
+.replit
+Dockerfile
+compose.yml

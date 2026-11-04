@@ -1,11 +1,15 @@
 import express from 'express';
 import { sql } from 'drizzle-orm';
-import { memberships, siteStatuses, sites, users, workspaces } from '../db/schema.js';
+import { appraisalRequests, memberships, pendingInvites, siteStatuses, sites, users, workspaces } from '../db/schema.js';
 import { parseCSV, toNullableNumber } from '../../src/lib/parseCsv.js';
-import { requirePlatformAdmin, requireUser, clerkClient } from '../auth.js';
+import { requirePlatformAdmin, requireUser } from '../auth.js';
+import { supabaseAdmin, supabaseConfigured } from '../supabase.js';
 
 const router = express.Router();
 const validStatuses = new Set(['new', 'accepted', 'dismissed']);
+const appraisalStatuses = new Set(['requested', 'in_progress', 'delivered', 'cancelled']);
+// Placeholder price (3 Nov 2026), not yet agreed. One place to change it; requests store the price they were made at.
+const APPRAISAL_OFFER = { pricePence: 20000, vat: 'plus VAT' };
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 const DEFAULT_MAP_CONFIG = {
@@ -194,13 +198,66 @@ router.get('/workspaces/:workspaceId/sites', async (req, res) => {
       s.review_flag,
       s.lat,
       s.lon,
-      COALESCE(ss.status, 'new') AS status
+      COALESCE(ss.status, 'new') AS status,
+      ar.id AS appraisal_id,
+      ar.status AS appraisal_status,
+      ar.created_at AS appraisal_requested_at,
+      ar.price_pence AS appraisal_price_pence
     FROM sites s
     LEFT JOIN site_statuses ss ON ss.site_id = s.id
+    -- Latest appraisal request per site, if any
+    LEFT JOIN LATERAL (
+      SELECT id, status, created_at, price_pence FROM appraisal_requests
+      WHERE site_id = s.id ORDER BY created_at DESC LIMIT 1
+    ) ar ON true
     WHERE s.workspace_id = ${workspaceId}
     ORDER BY s.id
   `);
-  res.json({ sites: result.rows });
+  res.json({ sites: result.rows, appraisalOffer: APPRAISAL_OFFER });
+});
+
+router.post('/workspaces/:workspaceId/sites/:siteId/appraisal-requests', async (req, res) => {
+  const workspaceId = Number(req.params.workspaceId);
+  const siteId = Number(req.params.siteId);
+  if (!Number.isInteger(workspaceId) || !Number.isInteger(siteId)) return res.status(400).json({ error: 'Invalid workspace or site' });
+  if (!(await hasWorkspaceAccess(req.app.locals.db, req.localUser, workspaceId))) {
+    return res.status(403).json({ error: 'Workspace access required' });
+  }
+  const site = await req.app.locals.db.execute(sql`
+    SELECT id FROM sites WHERE id = ${siteId} AND workspace_id = ${workspaceId} LIMIT 1
+  `);
+  if (!site.rows.length) return res.status(404).json({ error: 'Site not found' });
+  const notes = String(req.body?.notes || '').trim().slice(0, 2000) || null;
+
+  try {
+    const [request] = await req.app.locals.db
+      .insert(appraisalRequests)
+      .values({ workspaceId, siteId, requestedBy: req.localUser.id, pricePence: APPRAISAL_OFFER.pricePence, notes })
+      .returning();
+    // TODO: email RTC (hello@) about the new request once the app can send mail.
+    res.status(201).json({ request });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'An appraisal has already been requested for this site' });
+    console.error('Appraisal request failed:', error);
+    res.status(500).json({ error: 'Unable to request an appraisal' });
+  }
+});
+
+// Clients can withdraw a request until RTC starts work on it
+router.post('/workspaces/:workspaceId/appraisal-requests/:requestId/cancel', async (req, res) => {
+  const workspaceId = Number(req.params.workspaceId);
+  const requestId = Number(req.params.requestId);
+  if (!Number.isInteger(workspaceId) || !Number.isInteger(requestId)) return res.status(400).json({ error: 'Invalid workspace or request' });
+  if (!(await hasWorkspaceAccess(req.app.locals.db, req.localUser, workspaceId))) {
+    return res.status(403).json({ error: 'Workspace access required' });
+  }
+  const result = await req.app.locals.db.execute(sql`
+    UPDATE appraisal_requests SET status = 'cancelled', updated_at = now()
+    WHERE id = ${requestId} AND workspace_id = ${workspaceId} AND status = 'requested'
+    RETURNING id, site_id, status
+  `);
+  if (!result.rows.length) return res.status(409).json({ error: 'This request can no longer be withdrawn' });
+  res.json({ request: result.rows[0] });
 });
 
 router.get('/workspaces/:workspaceId/map-config', async (req, res) => {
@@ -336,6 +393,42 @@ router.post('/admin/workspaces', requirePlatformAdmin, async (req, res) => {
   }
 });
 
+router.get('/admin/appraisal-requests', requirePlatformAdmin, async (req, res) => {
+  privateResponse(res);
+  const result = await req.app.locals.db.execute(sql`
+    SELECT
+      ar.id, ar.status, ar.price_pence, ar.notes, ar.created_at, ar.updated_at,
+      s.id AS site_id, s.site_name, s.borough, s.category,
+      w.id AS workspace_id, w.name AS workspace_name,
+      u.email AS requested_by_email, u.name AS requested_by_name
+    FROM appraisal_requests ar
+    INNER JOIN sites s ON s.id = ar.site_id
+    INNER JOIN workspaces w ON w.id = ar.workspace_id
+    INNER JOIN users u ON u.id = ar.requested_by
+    ORDER BY (ar.status IN ('requested', 'in_progress')) DESC, ar.created_at DESC
+  `);
+  res.json({ requests: result.rows });
+});
+
+router.patch('/admin/appraisal-requests/:requestId', requirePlatformAdmin, async (req, res) => {
+  const requestId = Number(req.params.requestId);
+  const status = req.body?.status;
+  if (!Number.isInteger(requestId) || !appraisalStatuses.has(status)) return res.status(400).json({ error: 'Invalid request or status' });
+  try {
+    const result = await req.app.locals.db.execute(sql`
+      UPDATE appraisal_requests SET status = ${status}, updated_at = now()
+      WHERE id = ${requestId}
+      RETURNING id, status
+    `);
+    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
+    res.json({ request: result.rows[0] });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'This site already has another open request' });
+    console.error('Appraisal status update failed:', error);
+    res.status(500).json({ error: 'Unable to update the request' });
+  }
+});
+
 router.get('/admin/users', requirePlatformAdmin, async (req, res) => {
   privateResponse(res);
   const [userResult, membershipResult] = await Promise.all([
@@ -366,7 +459,7 @@ router.get('/admin/users', requirePlatformAdmin, async (req, res) => {
 router.post('/admin/users/invite', requirePlatformAdmin, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Provide a valid email address' });
-  if (!clerkClient) return res.status(503).json({ error: 'Clerk is not configured' });
+  if (!supabaseConfigured) return res.status(503).json({ error: 'Supabase is not configured' });
 
   let workspaceId = null;
   if (req.body?.workspaceId !== undefined && req.body?.workspaceId !== null && req.body?.workspaceId !== '') {
@@ -377,12 +470,15 @@ router.post('/admin/users/invite', requirePlatformAdmin, async (req, res) => {
   }
 
   try {
-    const invitation = await clerkClient.invitations.createInvitation({
-      emailAddress: email,
-      redirectUrl: `https://${req.get('host')}/sign-up`,
-      publicMetadata: workspaceId ? { invitedWorkspaceId: workspaceId } : undefined,
+    await req.app.locals.db.insert(pendingInvites).values({ email, workspaceId }).onConflictDoUpdate({
+      target: pendingInvites.email,
+      set: { workspaceId },
     });
-    res.status(201).json({ invitationId: invitation.id, email, workspaceId });
+    const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+      redirectTo: `${req.protocol}://${req.get('host')}/sign-up`,
+    });
+    if (error) throw error;
+    res.status(201).json({ invitationId: data.user.id, email, workspaceId });
   } catch (error) {
     console.error('Invitation failed:', error);
     res.status(502).json({ error: 'Unable to send invitation' });

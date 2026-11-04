@@ -983,3 +983,4 @@ select.map-pill option { background: var(--paper); color: var(--ink); }
 }
 .adm-main > .adm-account { width: auto; max-width: none; }
 @media (max-width: 700px) { .adm-account { top: 24px; right: 64px; } }
+.auth-card .auth-note { margin: 2px 0 0; color: rgba(254,255,248,.62); font: 500 12px/1.5 var(--font-ui); }

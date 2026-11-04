@@ -199,7 +199,7 @@ function SignInRoute() {
     error={error}
     busy={busy}
     onSubmit={submit}
-    footer={<Link className="auth-link" to="/sign-up">Need an account? Sign up</Link>}
+    footer={<p className="auth-note">Access is by invitation. Your invite email has a link to set up your account.</p>}
   >
     <label>Email<input type="email" required value={email} onChange={event => setEmail(event.target.value)} /></label>
     <label>Password<input type="password" required value={password} onChange={event => setPassword(event.target.value)} /></label>
@@ -272,11 +272,8 @@ function ProtectedRoute({ children }) {
 function HomeRoute() {
   const { session, loading } = useSession();
   if (loading) return <LoadingScreen label="Checking your session" />;
-  return session ? <Home /> : <LandingPage />;
-}
-
-function LandingPage() {
-  return <div className="landing-screen"><div className="landing-content"><div className="landing-wordmark">Site Selection</div><div className="landing-rule"/><h1>Make the next<br/><em>place</em> worth finding.</h1><p>Review curated venues and vacant plots, share a considered shortlist, and move from map to decision with clarity.</p><div className="landing-actions"><Link to="/sign-in" className="decision accept">Sign in <ArrowRight size={13}/></Link><Link to="/sign-up" className="landing-secondary">Create an account</Link></div></div><div className="landing-aside"><div className="landing-coordinate">ROSE TINSLEY Consulting</div><div className="landing-note">A private tool for<br/>thoughtful site selection.</div></div></div>;
+  // Signed-out visitors (e.g. from the website's Client Login button) go straight to sign-in
+  return session ? <Home /> : <Navigate to="/sign-in" replace />;
 }
 
 function AdminRoute() {

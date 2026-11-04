@@ -984,3 +984,11 @@ select.map-pill option { background: var(--paper); color: var(--ink); }
 .adm-main > .adm-account { width: auto; max-width: none; }
 @media (max-width: 700px) { .adm-account { top: 24px; right: 64px; } }
 .auth-card .auth-note { margin: 2px 0 0; color: rgba(254,255,248,.62); font: 500 12px/1.5 var(--font-ui); }
+
+/* Sign-in toned to match the website hero (4 Nov 2026): charcoal ground, the hero's SVG grain at the same
+   strength, and a soft charcoal fade at the bottom. The Topography props keep the moss lines low-glow. */
+.auth-screen { background: #2D2D2A; }
+.auth-grain { position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: .55; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='4' stitchTiles='stitch' result='noise'/%3E%3CfeColorMatrix in='noise' type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -2 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); background-size: 120px 120px; background-repeat: repeat; }
+.auth-vignette { position: absolute; inset: 0; z-index: 0; pointer-events: none; background: linear-gradient(to top, rgba(45,45,42,.6) 0%, rgba(45,45,42,.3) 12%, transparent 35%), radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(30,30,28,.45) 100%); }
+/* Glass card tinted towards charcoal rather than green, so it sits on the new ground */
+.auth-card { background: linear-gradient(160deg, rgba(254,255,248,.11), rgba(254,255,248,.04)); border-color: rgba(254,255,248,.18); box-shadow: 0 2px 4px rgba(10,10,9,.1), 0 24px 70px rgba(10,10,9,.45), inset 0 1px 0 rgba(254,255,248,.3); }

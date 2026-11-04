@@ -145,14 +145,22 @@ function SignOutButton() {
   return <button type="button" className="sign-out-button" onClick={() => supabase.auth.signOut()} aria-label="Sign out" title="Sign out"><LogOut size={14}/></button>;
 }
 
-// Sign-in and sign-up sit over the React Bits topography lines in light moss on deep forest.
-// Still for reduced motion; skipped where WebGL2 is missing (the forest ground shows on its own).
+// Sign-in and sign-up match the website hero: brand moss contour lines (React Bits topography) on
+// charcoal, kept low-glow, with the hero's grain and bottom fade over the top.
+// Still for reduced motion; the lines are skipped where WebGL2 is missing (charcoal and grain remain).
 function AuthBackground() {
-  if (!document.createElement('canvas').getContext('webgl2')) return null;
+  const webgl = Boolean(document.createElement('canvas').getContext('webgl2'));
   const still = prefersReducedMotion();
-  return <div className="auth-topography" aria-hidden="true">
-    <Topography color="#A9BD7A" lineCount={20} lineWidth={1.1} glow={0.5} fog={0.45} brightness={0.85} tilt={30} speed={still ? 0 : 0.12} intro={!still} mouseInteraction={!still} dpr={Math.min(window.devicePixelRatio || 1, 1.5)}/>
-  </div>;
+  return <>
+    {webgl && <div className="auth-topography" aria-hidden="true">
+      {/* detail 0 and morph 0 keep the contours clean and smooth: no fine-noise jitter, no shape warping */}
+      <Topography color="#6F8443" lineCount={18} lineWidth={1} majorLines glow={0.18} fog={0.55} brightness={0.62} tilt={30}
+        detail={0} morph={0} scale={0.8} mouseStrength={0.3} trail={0.1}
+        speed={still ? 0 : 0.08} intro={!still} mouseInteraction={!still} dpr={Math.min(window.devicePixelRatio || 1, 1.5)}/>
+    </div>}
+    <div className="auth-grain" aria-hidden="true"/>
+    <div className="auth-vignette" aria-hidden="true"/>
+  </>;
 }
 
 function AuthShell({ children }) {

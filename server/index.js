@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { db, pool } from './db/index.js';
 import apiRouter from './routes/api.js';
 import { supabaseConfigured } from './supabase.js';
@@ -13,6 +15,36 @@ const port = Number(process.env.PORT || 5000);
 app.locals.db = db;
 // Behind Cloudflare Tunnel: read the real protocol (https) from X-Forwarded-Proto, used when building invite links
 app.set('trust proxy', true);
+
+// Security headers. The content policy lists every outside origin the client uses: Supabase (auth),
+// Google Fonts, and the two basemap tile servers. Vite's dev server injects inline scripts, so the
+// policy only applies in production.
+const isProduction = process.env.NODE_ENV === 'production';
+const supabaseOrigin = process.env.SUPABASE_URL ? new URL(process.env.SUPABASE_URL).origin : null;
+const basemapOrigins = ['https://tile.openstreetmap.org', 'https://*.tile.opentopomap.org'];
+app.use(helmet({
+  contentSecurityPolicy: isProduction ? {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      imgSrc: ["'self'", 'data:', 'blob:', ...basemapOrigins],
+      connectSrc: ["'self'", ...basemapOrigins, ...(supabaseOrigin ? [supabaseOrigin, supabaseOrigin.replace(/^https/, 'wss')] : [])],
+      workerSrc: ["'self'", 'blob:'],
+      childSrc: ['blob:'],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  } : false,
+}));
+
+// Broad per-visitor ceiling on the API. A map pan loads dozens of tiles, so it is generous.
+// Behind Cloudflare the real visitor is in CF-Connecting-IP; the app port is loopback-only, so it can't be faked.
+const clientKey = req => req.get('cf-connecting-ip') || req.ip;
+app.use('/api', rateLimit({ windowMs: 60 * 1000, limit: 1500, keyGenerator: clientKey, standardHeaders: 'draft-7', legacyHeaders: false, validate: { trustProxy: false, xForwardedForHeader: false } }));
 app.use(express.json({ limit: '12mb' }));
 
 if (!supabaseConfigured) {

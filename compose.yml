@@ -21,6 +21,7 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       # Tiles are fetched from Martin over the private rtc-tiles network, never the public internet
       MARTIN_URL: http://martin:3000
+      APP_URL: https://app.rosetinsleyconsulting.com
     networks:
       - default
       - rtc-tiles

@@ -1,4 +1,5 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { sql } from 'drizzle-orm';
 import { appraisalRequests, memberships, pendingInvites, siteStatuses, sites, users, workspaces } from '../db/schema.js';
 import { parseCSV, toNullableNumber } from '../../src/lib/parseCsv.js';
@@ -219,7 +220,18 @@ router.get('/workspaces/:workspaceId/sites', async (req, res) => {
   res.json({ sites: result.rows, appraisalOffer: APPRAISAL_OFFER });
 });
 
-router.post('/workspaces/:workspaceId/sites/:siteId/appraisal-requests', async (req, res) => {
+// Appraisal requests are paid work, so cap how many one person can send in a short time
+const appraisalRequestLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  keyGenerator: req => `user-${req.localUser.id}`,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many appraisal requests in a short time. Please try again in a few minutes.' },
+  validate: { trustProxy: false, xForwardedForHeader: false },
+});
+
+router.post('/workspaces/:workspaceId/sites/:siteId/appraisal-requests', appraisalRequestLimit, async (req, res) => {
   const workspaceId = Number(req.params.workspaceId);
   const siteId = Number(req.params.siteId);
   if (!Number.isInteger(workspaceId) || !Number.isInteger(siteId)) return res.status(400).json({ error: 'Invalid workspace or site' });
@@ -521,7 +533,8 @@ router.post('/admin/users/invite', requirePlatformAdmin, async (req, res) => {
       set: { workspaceId },
     });
     const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-      redirectTo: `${req.protocol}://${req.get('host')}/sign-up`,
+      // A fixed public address, so invite links can't be steered by a request's Host header
+      redirectTo: `${(process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '')}/sign-up`,
     });
     if (error) throw error;
     res.status(201).json({ invitationId: data.user.id, email, workspaceId });

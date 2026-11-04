@@ -2,12 +2,15 @@ import express from 'express';
 import { sql } from 'drizzle-orm';
 import { appraisalRequests, memberships, pendingInvites, siteStatuses, sites, users, workspaces } from '../db/schema.js';
 import { parseCSV, toNullableNumber } from '../../src/lib/parseCsv.js';
-import { requirePlatformAdmin, requireUser } from '../auth.js';
+import { clearSessionCache, requirePlatformAdmin, requireUser } from '../auth.js';
 import { supabaseAdmin, supabaseConfigured } from '../supabase.js';
 
 const router = express.Router();
 const validStatuses = new Set(['new', 'accepted', 'dismissed']);
 const appraisalStatuses = new Set(['requested', 'in_progress', 'delivered', 'cancelled']);
+// Martin is only reachable inside Galahad (loopback, or the rtc-tiles Docker network from the container)
+const MARTIN_URL = (process.env.MARTIN_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
+const layerRoles = new Set(['parcels', 'buildings']);
 // Placeholder price (3 Nov 2026), not yet agreed. One place to change it; requests store the price they were made at.
 const APPRAISAL_OFFER = { pricePence: 20000, vat: 'plus VAT' };
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
@@ -272,6 +275,49 @@ router.get('/workspaces/:workspaceId/map-config', async (req, res) => {
   res.json({ mapConfig: mergeMapConfig(result.rows[0].map_config) });
 });
 
+router.get('/workspaces/:workspaceId/layers', async (req, res) => {
+  privateResponse(res);
+  const workspaceId = Number(req.params.workspaceId);
+  if (!Number.isInteger(workspaceId)) return res.status(400).json({ error: 'Invalid workspace id' });
+  if (!(await hasWorkspaceAccess(req.app.locals.db, req.localUser, workspaceId))) {
+    return res.status(403).json({ error: 'Workspace access required' });
+  }
+  const result = await req.app.locals.db.execute(sql`
+    SELECT role, source_id, label FROM workspace_layers WHERE workspace_id = ${workspaceId} ORDER BY role
+  `);
+  res.json({ layers: result.rows });
+});
+
+// Vector tiles, only for layers assigned to a workspace the user belongs to. Martin itself is not public.
+router.get('/workspaces/:workspaceId/tiles/:role/:z/:x/:y', async (req, res) => {
+  const workspaceId = Number(req.params.workspaceId);
+  const [z, x, y] = [req.params.z, req.params.x, req.params.y].map(Number);
+  const { role } = req.params;
+  const inRange = Number.isInteger(z) && z >= 0 && z <= 24 && [x, y].every(n => Number.isInteger(n) && n >= 0 && n < 2 ** z);
+  if (!Number.isInteger(workspaceId) || !layerRoles.has(role) || !inRange) return res.status(400).json({ error: 'Invalid tile request' });
+  if (!(await hasWorkspaceAccess(req.app.locals.db, req.localUser, workspaceId))) {
+    return res.status(403).json({ error: 'Workspace access required' });
+  }
+  const layer = await req.app.locals.db.execute(sql`
+    SELECT source_id FROM workspace_layers WHERE workspace_id = ${workspaceId} AND role = ${role} LIMIT 1
+  `);
+  if (!layer.rows.length) return res.status(404).json({ error: 'Layer not available for this workspace' });
+
+  try {
+    const upstream = await fetch(`${MARTIN_URL}/${encodeURIComponent(layer.rows[0].source_id)}/${z}/${x}/${y}`);
+    // Tiles change rarely, but they belong to one client, so only the browser may cache them
+    res.set('Cache-Control', 'private, max-age=600');
+    if (upstream.status === 204) return res.status(204).end();
+    if (!upstream.ok) return res.status(502).json({ error: 'Tile server error' });
+    // fetch has already decompressed the body, so the upstream Content-Encoding is not passed on
+    res.set('Content-Type', upstream.headers.get('content-type') || 'application/x-protobuf');
+    res.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (error) {
+    console.error('Tile fetch failed:', error.message);
+    res.status(502).json({ error: 'Tile server unavailable' });
+  }
+});
+
 router.patch('/admin/workspaces/:workspaceId/map-config', requirePlatformAdmin, async (req, res) => {
   const workspaceId = Number(req.params.workspaceId);
   if (!Number.isInteger(workspaceId)) return res.status(400).json({ error: 'Invalid workspace id' });
@@ -517,6 +563,7 @@ router.patch('/admin/users/:userId', requirePlatformAdmin, async (req, res) => {
     .where(sql`${users.id} = ${userId}`)
     .returning({ id: users.id, isPlatformAdmin: users.isPlatformAdmin });
   if (!result.length) return res.status(404).json({ error: 'User not found' });
+  clearSessionCache();
   res.json(result[0]);
 });
 

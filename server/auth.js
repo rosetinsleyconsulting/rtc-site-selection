@@ -38,6 +38,27 @@ export async function ensureLocalUser(db, supabaseUser) {
   return localUser;
 }
 
+// The map makes one request per tile, so checking every one with Supabase would be slow and costly.
+// Verified sessions are remembered for a minute; a revoked login stops working within that window.
+const SESSION_CACHE_MS = 60 * 1000;
+const sessionCache = new Map();
+
+async function resolveLocalUser(db, token) {
+  const cached = sessionCache.get(token);
+  if (cached && cached.expiresAt > Date.now()) return cached.localUser;
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  if (error || !data?.user) return null;
+  const localUser = await ensureLocalUser(db, data.user);
+  if (sessionCache.size > 2000) sessionCache.clear();
+  sessionCache.set(token, { localUser, expiresAt: Date.now() + SESSION_CACHE_MS });
+  return localUser;
+}
+
+// Admin changes (role or memberships) should apply straight away rather than after the cache expires
+export function clearSessionCache() {
+  sessionCache.clear();
+}
+
 export async function requireUser(req, res, next) {
   if (!supabaseConfigured) {
     return res.status(503).json({
@@ -51,9 +72,9 @@ export async function requireUser(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const { data, error } = await supabaseAdmin.auth.getUser(token);
-    if (error || !data?.user) return res.status(401).json({ error: 'Unauthorized' });
-    req.localUser = await ensureLocalUser(req.app.locals.db, data.user);
+    const localUser = await resolveLocalUser(req.app.locals.db, token);
+    if (!localUser) return res.status(401).json({ error: 'Unauthorized' });
+    req.localUser = localUser;
     return next();
   } catch (error) {
     console.error('Unable to provision local user:', error);

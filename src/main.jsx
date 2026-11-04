@@ -50,7 +50,8 @@ if (supabase) {
   supabase.auth.getSession().then(({ data }) => { currentSession = data.session; });
   supabase.auth.onAuthStateChange((_event, session) => { currentSession = session; });
 }
-const tileServerUrl = import.meta.env.TILE_SERVER_URL?.replace(/\/+$/, '');
+// Map layer slots. Which tile source fills each slot is set per workspace (workspace_layers), and tiles
+// come through the app's own /api route, which checks the user's access first.
 const CONTEXT_LAYERS = [
   { key: 'parcels', label: 'Parcels', mapLayerIds: ['context-parcels'] },
   { key: 'buildings', label: 'Buildings', mapLayerIds: ['context-buildings-fill', 'context-buildings-outline'] },
@@ -439,6 +440,8 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [mapConfig, setMapConfig] = useState(null);
+  // Tile layers this workspace is allowed, one per slot (parcels / buildings). Empty means sites only.
+  const [contextLayers, setContextLayers] = useState([]);
   const [layerOverrides, setLayerOverrides] = useState(null);
   const [theme, setTheme] = usePanelTheme();
   const [basemapChoice, setBasemapChoice] = useState(() => {
@@ -453,13 +456,15 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
     setLoading(true);
     setError('');
     try {
-      const [sitesResponse, configResponse] = await Promise.all([
+      const [sitesResponse, configResponse, layersResponse] = await Promise.all([
         api(`/api/workspaces/${workspace.id}/sites`),
         api(`/api/workspaces/${workspace.id}/map-config`),
+        api(`/api/workspaces/${workspace.id}/layers`),
       ]);
       setSites(sitesResponse.sites || []);
       setAppraisalOffer(sitesResponse.appraisalOffer || null);
       setMapConfig(configResponse.mapConfig);
+      setContextLayers(layersResponse.layers || []);
       const migrationKey = `lowlu-statuses-migrated-${workspace.id}`;
       const oldStatuses = localStorage.getItem('lowlu-statuses');
       if (oldStatuses && !localStorage.getItem(migrationKey)) {
@@ -529,9 +534,10 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
   const config = mapConfig || FALLBACK_MAP_CONFIG;
   const markerColors = config.symbology.markers;
   const statusInk = { '--st-new': markerColors.new, '--st-accepted': markerColors.accepted, '--st-dismissed': markerColors.dismissed };
-  const layerVisibility = layerOverrides || Object.fromEntries(CONTEXT_LAYERS.map(layer => [layer.key, Boolean(tileServerUrl) && Boolean(config.contextLayerDefaultOn)]));
+  const availableLayers = Object.fromEntries(contextLayers.map(layer => [layer.role, layer]));
+  const layerVisibility = layerOverrides || Object.fromEntries(CONTEXT_LAYERS.map(layer => [layer.key, Boolean(availableLayers[layer.key]) && Boolean(config.contextLayerDefaultOn)]));
   const toggleLayer = key => setLayerOverrides({ ...layerVisibility, [key]: !layerVisibility[key] });
-  const orderedContextLayers = config.layerOrder.map(key => CONTEXT_LAYERS.find(layer => layer.key === key)).filter(Boolean);
+  const orderedContextLayers = config.layerOrder.filter(key => availableLayers[key]).map(key => ({ key, label: availableLayers[key].label }));
   const filtersActive = statusFilter !== 'all' || borough !== 'All boroughs' || category !== 'All categories' || reviewFlag !== 'All flags' || appraisalFilter !== 'all';
   const resetFilters = () => { setStatusFilter('all'); setBorough('All boroughs'); setCategory('All categories'); setReviewFlag('All flags'); setAppraisalFilter('all'); setSortOrder('default'); };
   const togglePanel = key => setActivePanel(current => (current === key ? null : key));
@@ -615,14 +621,14 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
           <div className="panel-group">
             <h3>Operational layers</h3>
             <label className="layer-toggle is-locked"><input type="checkbox" checked disabled/><span className="layer-toggle-swatch is-points" style={{ background: markerColors.new }}/>Shortlisted sites</label>
-            {tileServerUrl
+            {orderedContextLayers.length
               ? orderedContextLayers.map(layer => <label key={layer.key} className="layer-toggle">
                   <input type="checkbox" checked={Boolean(layerVisibility[layer.key])} onChange={() => toggleLayer(layer.key)}/>
                   <span className="layer-toggle-swatch" style={layer.key === 'parcels' ? { borderColor: config.symbology.parcels.color } : { background: config.symbology.buildingsFill.color, borderColor: config.symbology.buildingsOutline.color }}/>
                   {layer.label}
                   {layer.key === 'parcels' && <small>from zoom {config.zoomRanges.parcels.minZoom}</small>}
                 </label>)
-              : <p className="panel-note">Context layers need the tile server and are not available here.</p>}
+              : <p className="panel-note">No context layers have been added to this workspace yet.</p>}
           </div>
           <div className="panel-group">
             <h3>Basemap</h3>
@@ -643,11 +649,11 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
               <li><i className="is-point is-ring" style={{ borderColor: APPRAISAL_RING }}/>Appraisal requested<b>{counts.appraisals}</b></li>
             </ul>
           </div>
-          {tileServerUrl && <div className="panel-group">
+          {orderedContextLayers.length > 0 && <div className="panel-group">
             <h3>Context</h3>
             <ul className="legend-list">
-              <li><i className="is-line" style={{ borderColor: config.symbology.parcels.color }}/>Land Registry parcels</li>
-              <li><i className="is-fill" style={{ background: config.symbology.buildingsFill.color, borderColor: config.symbology.buildingsOutline.color }}/>Buildings</li>
+              {availableLayers.parcels && <li><i className="is-line" style={{ borderColor: config.symbology.parcels.color }}/>{availableLayers.parcels.label}</li>}
+              {availableLayers.buildings && <li><i className="is-fill" style={{ background: config.symbology.buildingsFill.color, borderColor: config.symbology.buildingsOutline.color }}/>{availableLayers.buildings.label}</li>}
             </ul>
           </div>}
           {reviewFlags.length > 0 && <div className="panel-group">
@@ -661,7 +667,7 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
       </aside>}
       </div>
       <main className={`map-area ${selected && inspectorOpen ? 'inspector-open' : ''}`}>
-        <MapPanel sites={filtered} selected={selected} onSelect={selectSite} hoveredId={hoveredId} onHover={setHoveredId} mapConfig={mapConfig} layerVisibility={layerVisibility} inspectorOpen={Boolean(selected && inspectorOpen)} basemap={basemap}/>
+        <MapPanel key={workspace.id} workspaceId={workspace.id} contextLayers={contextLayers} sites={filtered} selected={selected} onSelect={selectSite} hoveredId={hoveredId} onHover={setHoveredId} mapConfig={mapConfig} layerVisibility={layerVisibility} inspectorOpen={Boolean(selected && inspectorOpen)} basemap={basemap}/>
         {/* Floating over the map: workspace and site counts top centre (counts double as status filters), account tools top right */}
         <div className="map-pills" role="group" aria-label="Shortlist summary">
           {workspaces.length > 1
@@ -691,7 +697,7 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
   </div>;
 }
 
-function MapPanel({ sites, selected, onSelect, hoveredId, onHover, mapConfig, layerVisibility, inspectorOpen, basemap }) {
+function MapPanel({ workspaceId, contextLayers, sites, selected, onSelect, hoveredId, onHover, mapConfig, layerVisibility, inspectorOpen, basemap }) {
   const basemapRef = useRef(basemap);
   basemapRef.current = basemap;
   const containerRef = useRef(null);
@@ -754,6 +760,10 @@ function MapPanel({ sites, selected, onSelect, hoveredId, onHover, mapConfig, la
       center: [-0.18, 51.53],
       zoom: 10.4,
       attributionControl: false,
+      // Our own tile route needs the signed-in user's token; third-party basemap requests are left alone
+      transformRequest: url => (url.startsWith(`${window.location.origin}/api/`) && currentSession?.access_token
+        ? { url, headers: { Authorization: `Bearer ${currentSession.access_token}` } }
+        : { url }),
       style: {
         version: 8,
         sources: {
@@ -773,18 +783,23 @@ function MapPanel({ sites, selected, onSelect, hoveredId, onHover, mapConfig, la
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.on('load', () => {
       const config = configRef.current;
-      if (tileServerUrl) {
+      // Tiles come from this app (same origin) with the user's token; see transformRequest
+      const tileUrl = role => `${window.location.origin}/api/workspaces/${workspaceId}/tiles/${role}/{z}/{x}/{y}`;
+      const sourceLayer = role => contextLayers.find(layer => layer.role === role)?.source_id;
+      {
         const visibilityFor = key => (layerVisibility[key] ? 'visible' : 'none');
         const zoomRanges = config.zoomRanges || FALLBACK_MAP_CONFIG.zoomRanges;
         const { parcels, buildingsFill, buildingsOutline } = config.symbology;
         const addParcels = () => {
-          map.addSource('inspire-parcels', { type: 'vector', tiles: [`${tileServerUrl}/inspire_parcels/{z}/{x}/{y}`] });
-          map.addLayer({ id: 'context-parcels', type: 'line', source: 'inspire-parcels', 'source-layer': 'inspire_parcels', minzoom: zoomRanges.parcels.minZoom, maxzoom: zoomRanges.parcels.maxZoom, layout: { visibility: visibilityFor('parcels') }, paint: { 'line-color': parcels.color, 'line-width': parcels.width, 'line-opacity': parcels.opacity } });
+          if (!sourceLayer('parcels')) return;
+          map.addSource('context-parcels', { type: 'vector', tiles: [tileUrl('parcels')] });
+          map.addLayer({ id: 'context-parcels', type: 'line', source: 'context-parcels', 'source-layer': sourceLayer('parcels'), minzoom: zoomRanges.parcels.minZoom, maxzoom: zoomRanges.parcels.maxZoom, layout: { visibility: visibilityFor('parcels') }, paint: { 'line-color': parcels.color, 'line-width': parcels.width, 'line-opacity': parcels.opacity } });
         };
         const addBuildings = () => {
-          map.addSource('lowlu-buildings', { type: 'vector', tiles: [`${tileServerUrl}/lowlu_final_buildings/{z}/{x}/{y}`] });
-          map.addLayer({ id: 'context-buildings-fill', type: 'fill', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', minzoom: zoomRanges.buildings.minZoom, maxzoom: zoomRanges.buildings.maxZoom, layout: { visibility: visibilityFor('buildings') }, paint: { 'fill-color': buildingsFill.color, 'fill-opacity': buildingsFill.opacity } });
-          map.addLayer({ id: 'context-buildings-outline', type: 'line', source: 'lowlu-buildings', 'source-layer': 'lowlu_final_buildings', minzoom: zoomRanges.buildings.minZoom, maxzoom: zoomRanges.buildings.maxZoom, layout: { visibility: visibilityFor('buildings') }, paint: { 'line-color': buildingsOutline.color, 'line-width': buildingsOutline.width } });
+          if (!sourceLayer('buildings')) return;
+          map.addSource('context-buildings', { type: 'vector', tiles: [tileUrl('buildings')] });
+          map.addLayer({ id: 'context-buildings-fill', type: 'fill', source: 'context-buildings', 'source-layer': sourceLayer('buildings'), minzoom: zoomRanges.buildings.minZoom, maxzoom: zoomRanges.buildings.maxZoom, layout: { visibility: visibilityFor('buildings') }, paint: { 'fill-color': buildingsFill.color, 'fill-opacity': buildingsFill.opacity } });
+          map.addLayer({ id: 'context-buildings-outline', type: 'line', source: 'context-buildings', 'source-layer': sourceLayer('buildings'), minzoom: zoomRanges.buildings.minZoom, maxzoom: zoomRanges.buildings.maxZoom, layout: { visibility: visibilityFor('buildings') }, paint: { 'line-color': buildingsOutline.color, 'line-width': buildingsOutline.width } });
         };
         config.layerOrder.forEach(key => (key === 'parcels' ? addParcels : key === 'buildings' ? addBuildings : () => {})());
       }
@@ -843,7 +858,7 @@ function MapPanel({ sites, selected, onSelect, hoveredId, onHover, mapConfig, la
   }, [geoJson]);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !tileServerUrl) return;
+    if (!map) return;
     const applyVisibility = () => CONTEXT_LAYERS.forEach(layer => {
       const visibility = layerVisibility[layer.key] ? 'visible' : 'none';
       layer.mapLayerIds.forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visibility); });

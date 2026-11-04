@@ -15,5 +15,5 @@ const maplibreSharedChunk = () => ({
 export default defineConfig({
   plugins: [react(), maplibreSharedChunk()],
   server: { allowedHosts: true },
-  envPrefix: ['VITE_', 'TILE_SERVER_URL'],
+  envPrefix: ['VITE_'],
 });

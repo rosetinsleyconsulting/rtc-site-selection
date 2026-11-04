@@ -1,4 +1,4 @@
-# Build stage: Vite bakes VITE_* and TILE_SERVER_URL into the client bundle,
+# Build stage: Vite bakes VITE_* into the client bundle,
 # so they must be passed as build args, not runtime env.
 FROM node:24-alpine AS build
 WORKDIR /app
@@ -7,7 +7,6 @@ RUN npm ci
 COPY . .
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
-ARG TILE_SERVER_URL
 RUN npm run build
 
 # Runtime stage: production deps and the built client only

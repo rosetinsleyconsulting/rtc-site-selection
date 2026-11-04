@@ -74,6 +74,19 @@ export const sites = pgTable('sites', {
   lon: doublePrecision('lon'),
 });
 
+export const contextLayerRoleEnum = pgEnum('context_layer_role', ['parcels', 'buildings']);
+
+// Which Martin tile source fills each map layer slot for a workspace. The tile route refuses anything not listed.
+export const workspaceLayers = pgTable('workspace_layers', {
+  workspaceId: integer('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  role: contextLayerRoleEnum('role').notNull(),
+  sourceId: text('source_id').notNull(),
+  label: text('label').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, table => ({
+  workspaceRolePrimaryKey: primaryKey({ columns: [table.workspaceId, table.role] }),
+}));
+
 export const appraisalRequests = pgTable('appraisal_requests', {
   id: serial('id').primaryKey(),
   workspaceId: integer('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),

@@ -39,6 +39,9 @@ app.use(helmet({
       formAction: ["'self'"],
     },
   } : false,
+  // Helmet defaults to no-referrer, and OSM's tile servers return 403 to requests without a Referer.
+  // This sends only the origin cross-site, never the path.
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 
 // Broad per-visitor ceiling on the API. A map pan loads dozens of tiles, so it is generous.

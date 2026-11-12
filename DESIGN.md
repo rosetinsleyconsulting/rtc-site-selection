@@ -12,6 +12,15 @@ colors:
   status-new: "#A67C7C"
   status-accepted: "#517C78"
   status-dismissed: "#9D9D91"
+  result-on-site: "#B33A3A"
+  result-on-site-ink: "#A33232"
+  result-on-site-deep: "#8E2B2B"
+  result-within: "#C9A227"
+  result-within-ink: "#7D630F"
+  result-within-deep: "#6B5410"
+  result-clear-ink: "#4F6030"
+  result-outside-line: "#5F6358"
+  result-outside-label: "#45493F"
 typography:
   headline:
     fontFamily: "Noto Serif Display"
@@ -55,6 +64,11 @@ typography:
     fontFamily: Montserrat
     fontSize: 11.5px
     fontWeight: 500
+  report-label:
+    fontFamily: Montserrat
+    fontSize: 9.5px
+    fontWeight: 700
+    letterSpacing: 0.12em
 rounded:
   sm: 5px
   md: 6px
@@ -207,6 +221,16 @@ Bordered 38–42px fields with a moss focus ring. The index search is the except
 
 ### Site appraisal requests (added 3 Nov 2026)
 Gold (rye `#B6955B`) is the appraisal colour, used only for appraisal state: a ring on the map marker, an "Appraisal requested" tag in the site list, a gold pill counting open requests (click to filter), and the request block in the site article. The block starts as a single "Request site appraisal · £200 plus VAT" button, expands into a confirm form (what's covered, fixed fee, optional notes), then shows the request state with a Withdraw link while it's still "requested". Price is a placeholder held once in `APPRAISAL_OFFER` (server/routes/api.js). Admins manage requests under Admin → Site appraisals.
+
+### Site appraisal report (11 Nov 2026)
+Admin → Site appraisals → Build report (`src/ReportBuilder.jsx`, styles in `src/report-builder.css`, verdict logic in `src/lib/siteCheck.js`). The editor on the left follows the admin theme. The report on the right is always paper (cream, charcoal ink, tokens pinned in `.rb-preview`) and is the printed page: 180 mm wide on screen and in print, so what you see is what prints.
+- **Result colours are data.** On the site: red `#B33A3A` (text `#A33232`, labels `#8E2B2B`). Within the search area: gold `#C9A227` (text `#7D630F`, labels `#6B5410`). Clear: moss ring. No data: dashed grey ring. Nearby outside the search area (map only): grey fill with a `#5F6358` outline. Use these for constraint results and nothing else. Rye gold stays the appraisal-request colour, so it's never used for "within".
+- **One vocabulary.** "On the site", "Within the search area", "Clear", "No data", from `CHECK_STATUS`. Don't paraphrase them per view.
+- **Never colour alone.** Findings sit under group headings that say the result in words. The pip is reinforcement.
+- **Section order.** Each section has a 1px charcoal rule above it, then the serif heading, a count standfirst, notes, a 3:2 map, the findings table (Constraint, What's there), then clear layers as outlined chips (hairline border, no fill, pip and name inside; the one place chips are allowed, at Eilish's request, 11 Nov 2026) under group headings: "Clear of the search area" (with nearest distance), "Nothing within 3 km", and "No data loaded".
+- **Map labels** use Noto Sans from OpenFreeMap's glyph server, a third face allowed only on this map because the glyph server has no Montserrat.
+- **Print** forces colours on (`print-color-adjust: exact`), keeps rows, maps and headings whole rather than whole sections, numbers pages, hides empty notes and shows a plain basemap attribution line.
+- Client-facing labels avoid internal dataset codes. The internal review flag doesn't print.
 
 ### Sign-in and sign-up (3 Nov 2026)
 Matches the website hero (toned down 4 Nov 2026): charcoal ground (`#2D2D2A`) with the React Bits Topography background (`src/Topography.jsx`, copied unmodified with its MIT + Commons Clause notice) drawing brand moss (`#6F8443`) contour lines at low glow, plus the hero grain (SVG noise, 55%) and a soft charcoal fade at the bottom. No product title or strapline: the type-set RTC logo (as on the website nav, cream, linking to the website) sits top left, and the form is a centred glass card matching the website (translucent cream gradient, 24px blur, fine light border, top highlight, radius 18) with cream text, see-through inputs with a moss focus ring, and a solid cream Continue button. Still under reduced motion; plain forest when WebGL2 is missing. Dark grey basemap lightened the same day to a mid charcoal (brightness-max 0.24).

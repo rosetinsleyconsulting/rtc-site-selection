@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowRight,
@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Eye,
   FileText,
   GripVertical,
   Layers3,
@@ -38,6 +39,7 @@ import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import Grainient from './Grainient.jsx';
 import Topography from './Topography.jsx';
+import ReportBuilderRoute from './ReportBuilder.jsx';
 import '../index.css';
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
@@ -50,6 +52,8 @@ if (supabase) {
   supabase.auth.getSession().then(({ data }) => { currentSession = data.session; });
   supabase.auth.onAuthStateChange((_event, session) => { currentSession = session; });
 }
+// Required by the INSPIRE conditions of use (01 Data Register). The year is the release year we serve.
+const INSPIRE_ATTRIBUTION = `Parcels: information subject to Crown copyright and database rights ${new Date().getFullYear()} and reproduced with the permission of HM Land Registry. The polygons (including the associated geometry, namely x, y co-ordinates) are subject to Crown copyright and database rights ${new Date().getFullYear()} Ordnance Survey AC0000851063. <a href="https://use-land-property-data.service.gov.uk/datasets/inspire/#conditions" target="_blank" rel="noopener">Conditions</a>`;
 // Map layer slots. Which tile source fills each slot is set per workspace (workspace_layers), and tiles
 // come through the app's own /api route, which checks the user's access first.
 const CONTEXT_LAYERS = [
@@ -70,16 +74,16 @@ const FALLBACK_MAP_CONFIG = {
     buildings: { minZoom: 0, maxZoom: 24 },
   },
 };
-const numberValue = value => {
+export const numberValue = value => {
   if (value === undefined || value === null || String(value).trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
-const area = value => {
+export const area = value => {
   const parsed = numberValue(value);
   return parsed === null ? 'Not recorded' : `${parsed.toLocaleString('en-GB', { maximumFractionDigits: 0 })} m²`;
 };
-const normalize = value => (value || '').toLowerCase();
+export const normalize = value => (value || '').toLowerCase();
 const REVIEW_FLAG_COLORS = {
   'Good Candidate': '#6F8443',
   'Public Park Caution': '#C9A227',
@@ -89,7 +93,7 @@ const REVIEW_FLAG_COLORS = {
 };
 const reviewFlagColor = flag => REVIEW_FLAG_COLORS[flag] || '#999999';
 
-async function api(path, options = {}) {
+export async function api(path, options = {}) {
   const response = await fetch(path, {
     credentials: 'include',
     cache: 'no-store',
@@ -141,7 +145,7 @@ function AuthProvider({ children }) {
   return <AuthContext.Provider value={{ session, loading }}>{children}</AuthContext.Provider>;
 }
 
-function SignOutButton() {
+export function SignOutButton() {
   return <button type="button" className="sign-out-button" onClick={() => supabase.auth.signOut()} aria-label="Sign out" title="Sign out"><LogOut size={14}/></button>;
 }
 
@@ -325,7 +329,8 @@ function Home() {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [workspaceId, setWorkspaceId] = useState(() => Number(localStorage.getItem('lowlu-workspace-id')) || null);
+  // Falls back to the pre-Nov 2026 key so people keep their last workspace after the rename
+  const [workspaceId, setWorkspaceId] = useState(() => Number(localStorage.getItem('site-selection-workspace-id') || localStorage.getItem('lowlu-workspace-id')) || null);
 
   const loadProfile = async () => {
     try {
@@ -343,7 +348,7 @@ function Home() {
 
   useEffect(() => { loadProfile(); }, []);
   useEffect(() => {
-    if (workspaceId) localStorage.setItem('lowlu-workspace-id', String(workspaceId));
+    if (workspaceId) localStorage.setItem('site-selection-workspace-id', String(workspaceId));
   }, [workspaceId]);
 
   if (loading) return <LoadingScreen label="Loading your workspace" />;
@@ -361,11 +366,11 @@ function Home() {
   />;
 }
 
-function LoadingScreen({ label }) {
+export function LoadingScreen({ label }) {
   return <div className="center-screen"><LoaderCircle className="spin" size={20}/><span>{label}</span></div>;
 }
 
-function ErrorScreen({ message, onRetry }) {
+export function ErrorScreen({ message, onRetry }) {
   return <div className="center-screen"><div className="center-card"><h1>We couldn’t load this view.</h1><p>{message}</p><div className="decision-row"><button className="decision accept" onClick={onRetry}>Try again</button><button className="decision" onClick={() => supabase.auth.signOut()}>Sign out</button></div></div></div>;
 }
 
@@ -378,7 +383,7 @@ const BASEMAP_KEY = 'rtc-site-selection-basemap';
 
 // Panel theme shared by the map workspace and Admin: dark by default, remembered per browser.
 // Storage can be blocked, so fall back quietly.
-function usePanelTheme() {
+export function usePanelTheme() {
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'; } catch { return 'dark'; }
   });
@@ -388,7 +393,7 @@ function usePanelTheme() {
   return [theme, setTheme];
 }
 
-function ThemeToggle({ theme, setTheme, className }) {
+export function ThemeToggle({ theme, setTheme, className }) {
   return <button type="button" className={className} onClick={() => setTheme(current => (current === 'dark' ? 'light' : 'dark'))} aria-label={theme === 'dark' ? 'Switch to light panels' : 'Switch to dark panels'} title={theme === 'dark' ? 'Light panels' : 'Dark panels'}>
     {theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}
   </button>;
@@ -420,7 +425,7 @@ const PANEL_GRADIENTS = {
 const prefersReducedMotion = () => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 const isPhone = () => Boolean(window.matchMedia?.('(max-width: 700px)').matches);
 
-function PanelBackground({ theme }) {
+export function PanelBackground({ theme }) {
   if (isPhone() || !document.createElement('canvas').getContext('webgl2')) return null;
   return <div className="panel-bg" aria-hidden="true">
     <Grainient timeSpeed={0.05} warpSpeed={0.5} warpFrequency={3.5} warpAmplitude={75} noiseScale={1.8} {...PANEL_GRADIENTS[theme]} static={prefersReducedMotion()}/>
@@ -442,12 +447,28 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
   const [inspectorOpen, setInspectorOpen] = useState(false);
   // One docked tool panel at a time, opened from the action bar (Esri Map Viewer pattern)
   const [activePanel, setActivePanel] = useState(() => (window.matchMedia?.('(max-width: 700px)').matches ? null : 'sites'));
+  // "View as client": an admin sees the workspace exactly as its members do. UI only: the server still treats
+  // the user as an admin, so this is a preview, not impersonation. Kept in the URL (?view=client) so it survives
+  // a reload and the back button exits it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const clientPreview = profile.isPlatformAdmin && searchParams.get('view') === 'client';
+  const asAdmin = profile.isPlatformAdmin && !clientPreview;
+  const setClientPreview = on => {
+    const next = new URLSearchParams(searchParams);
+    if (on) next.set('view', 'client'); else next.delete('view');
+    setSearchParams(next);
+    if (on) setActivePanel(current => (current === 'settings' ? null : current));
+  };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [mapConfig, setMapConfig] = useState(null);
   // Tile layers this workspace is allowed, one per slot (parcels / buildings). Empty means sites only.
   const [contextLayers, setContextLayers] = useState([]);
   const [layerOverrides, setLayerOverrides] = useState(null);
+  // Constraint layers (SSSI, green belt...) assigned to this workspace; any number, all off until switched on
+  const [constraintLayers, setConstraintLayers] = useState([]);
+  const [constraintsOn, setConstraintsOn] = useState({});
+  const toggleConstraint = sourceId => setConstraintsOn(current => ({ ...current, [sourceId]: !current[sourceId] }));
   const [theme, setTheme] = usePanelTheme();
   const [basemapChoice, setBasemapChoice] = useState(() => {
     try { const stored = localStorage.getItem(BASEMAP_KEY); return BASEMAP_CHOICES.some(item => item.key === stored) ? stored : 'auto'; } catch { return 'auto'; }
@@ -470,6 +491,8 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
       setAppraisalOffer(sitesResponse.appraisalOffer || null);
       setMapConfig(configResponse.mapConfig);
       setContextLayers(layersResponse.layers || []);
+      setConstraintLayers(layersResponse.constraints || []);
+      // Legacy: imports statuses saved in the browser by the old single-client Replit app. Key names must match what it wrote.
       const migrationKey = `lowlu-statuses-migrated-${workspace.id}`;
       const oldStatuses = localStorage.getItem('lowlu-statuses');
       if (oldStatuses && !localStorage.getItem(migrationKey)) {
@@ -543,6 +566,11 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
   const layerVisibility = layerOverrides || Object.fromEntries(CONTEXT_LAYERS.map(layer => [layer.key, Boolean(availableLayers[layer.key]) && Boolean(config.contextLayerDefaultOn)]));
   const toggleLayer = key => setLayerOverrides({ ...layerVisibility, [key]: !layerVisibility[key] });
   const orderedContextLayers = config.layerOrder.filter(key => availableLayers[key]).map(key => ({ key, label: availableLayers[key].label }));
+  // Constraint layers grouped under their section heading, keeping the server's sort order
+  const constraintSections = [...constraintLayers.reduce((groups, layer) => {
+    const section = layer.section || 'Other';
+    return groups.set(section, [...(groups.get(section) || []), layer]);
+  }, new Map())];
   const filtersActive = statusFilter !== 'all' || borough !== 'All boroughs' || category !== 'All categories' || reviewFlag !== 'All flags' || appraisalFilter !== 'all';
   const resetFilters = () => { setStatusFilter('all'); setBorough('All boroughs'); setCategory('All categories'); setReviewFlag('All flags'); setAppraisalFilter('all'); setSortOrder('default'); };
   const togglePanel = key => setActivePanel(current => (current === key ? null : key));
@@ -551,7 +579,7 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
     { key: 'filters', label: 'Filters', icon: SlidersHorizontal, badge: filtersActive },
     { key: 'layers', label: 'Layers', icon: Layers3 },
     { key: 'legend', label: 'Legend', icon: Shapes },
-    ...(profile.isPlatformAdmin ? [{ key: 'settings', label: 'Styling', icon: Settings2, admin: true }] : []),
+    ...(asAdmin ? [{ key: 'settings', label: 'Styling', icon: Settings2, admin: true }] : []),
   ];
   const panelTitles = { sites: 'Sites', filters: 'Filters', layers: 'Layers', legend: 'Legend', settings: 'Map styling' };
 
@@ -635,6 +663,15 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
                 </label>)
               : <p className="panel-note">No context layers have been added to this workspace yet.</p>}
           </div>
+          {constraintSections.map(([section, layers]) => <div className="panel-group" key={section}>
+            <h3>{section === 'Other' ? 'Constraints' : `${section} constraints`}</h3>
+            {layers.map(layer => <label key={layer.source_id} className="layer-toggle">
+              <input type="checkbox" checked={Boolean(constraintsOn[layer.source_id])} onChange={() => toggleConstraint(layer.source_id)}/>
+              <span className="layer-toggle-swatch" style={{ background: `${layer.colour}59`, borderColor: layer.colour }}/>
+              {layer.label}
+            </label>)}
+          </div>)}
+          {constraintLayers.length > 0 && <p className="panel-note">Click a shaded area on the map to see its name.</p>}
           <div className="panel-group">
             <h3>Basemap</h3>
             <div className="basemap-choices" role="radiogroup" aria-label="Basemap">
@@ -661,18 +698,24 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
               {availableLayers.buildings && <li><i className="is-fill" style={{ background: config.symbology.buildingsFill.color, borderColor: config.symbology.buildingsOutline.color }}/>{availableLayers.buildings.label}</li>}
             </ul>
           </div>}
+          {constraintLayers.some(layer => constraintsOn[layer.source_id]) && <div className="panel-group">
+            <h3>Constraints</h3>
+            <ul className="legend-list">
+              {constraintLayers.filter(layer => constraintsOn[layer.source_id]).map(layer => <li key={layer.source_id}><i className="is-fill" style={{ background: `${layer.colour}59`, borderColor: layer.colour }}/>{layer.label}</li>)}
+            </ul>
+          </div>}
           {reviewFlags.length > 0 && <div className="panel-group">
             <h3>Review flags</h3>
             <ul className="legend-list">{reviewFlags.map(flag => <li key={flag}><i className="is-point" style={{ background: reviewFlagColor(flag) }}/>{flag}</li>)}</ul>
           </div>}
         </div>}
-        {activePanel === 'settings' && profile.isPlatformAdmin && mapConfig && <div className="tool-panel-body">
+        {activePanel === 'settings' && asAdmin && mapConfig && <div className="tool-panel-body">
           <AdminMapSettings workspace={workspace} mapConfig={mapConfig} onSaved={setMapConfig}/>
         </div>}
       </aside>}
       </div>
       <main className={`map-area ${selected && inspectorOpen ? 'inspector-open' : ''}`}>
-        <MapPanel key={workspace.id} workspaceId={workspace.id} contextLayers={contextLayers} sites={filtered} selected={selected} onSelect={selectSite} hoveredId={hoveredId} onHover={setHoveredId} mapConfig={mapConfig} layerVisibility={layerVisibility} inspectorOpen={Boolean(selected && inspectorOpen)} basemap={basemap}/>
+        <MapPanel key={workspace.id} workspaceId={workspace.id} contextLayers={contextLayers} constraintLayers={constraintLayers} constraintsOn={constraintsOn} sites={filtered} selected={selected} onSelect={selectSite} hoveredId={hoveredId} onHover={setHoveredId} mapConfig={mapConfig} layerVisibility={layerVisibility} inspectorOpen={Boolean(selected && inspectorOpen)} basemap={basemap}/>
         {/* Floating over the map: workspace and site counts top centre (counts double as status filters), account tools top right */}
         <div className="map-pills" role="group" aria-label="Shortlist summary">
           {workspaces.length > 1
@@ -687,10 +730,16 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
           </button>}
         </div>
         <div className="map-account" role="group" aria-label="Account">
-          {profile.isPlatformAdmin && <Link to="/admin" className="map-pill is-link" title="Admin overview"><ShieldCheck size={14}/><span className="map-pill-label">Admin</span></Link>}
+          {asAdmin && <button type="button" className="map-pill is-link" onClick={() => setClientPreview(true)} title={`See this workspace as ${workspace.name}'s members do`}><Eye size={14}/><span className="map-pill-label">View as client</span></button>}
+          {asAdmin && <Link to="/admin" className="map-pill is-link" title="Admin overview"><ShieldCheck size={14}/><span className="map-pill-label">Admin</span></Link>}
           <ThemeToggle theme={theme} setTheme={setTheme} className="map-pill is-icon"/>
           <SignOutButton/>
         </div>
+        {clientPreview && <div className="client-preview-bar" role="status">
+          <Eye size={15} aria-hidden="true"/>
+          <span><b>Client view.</b> You're seeing {workspace.name} as its members do. Admin tools are hidden.</span>
+          <button type="button" onClick={() => setClientPreview(false)}><ShieldCheck size={13}/>Exit client view</button>
+        </div>}
         <aside className={`inspector-panel ${selected && inspectorOpen ? 'open' : ''}`}>
           {selected && inspectorOpen && <PanelBackground theme={theme}/>}
           <div className="inspector-scroll">
@@ -702,7 +751,7 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
   </div>;
 }
 
-function MapPanel({ workspaceId, contextLayers, sites, selected, onSelect, hoveredId, onHover, mapConfig, layerVisibility, inspectorOpen, basemap }) {
+function MapPanel({ workspaceId, contextLayers, constraintLayers = [], constraintsOn = {}, sites, selected, onSelect, hoveredId, onHover, mapConfig, layerVisibility, inspectorOpen, basemap }) {
   const basemapRef = useRef(basemap);
   basemapRef.current = basemap;
   const containerRef = useRef(null);
@@ -714,6 +763,8 @@ function MapPanel({ workspaceId, contextLayers, sites, selected, onSelect, hover
   const onHoverRef = useRef(onHover);
   const configRef = useRef(mapConfig || FALLBACK_MAP_CONFIG);
   const [mapFailed, setMapFailed] = useState(false);
+  const constraintsOnRef = useRef(constraintsOn);
+  constraintsOnRef.current = constraintsOn;
   const inspectorOpenRef = useRef(inspectorOpen);
   inspectorOpenRef.current = inspectorOpen;
   onSelectRef.current = onSelect;
@@ -797,7 +848,8 @@ function MapPanel({ workspaceId, contextLayers, sites, selected, onSelect, hover
         const { parcels, buildingsFill, buildingsOutline } = config.symbology;
         const addParcels = () => {
           if (!sourceLayer('parcels')) return;
-          map.addSource('context-parcels', { type: 'vector', tiles: [tileUrl('parcels')] });
+          // HMLR INSPIRE Index Polygons (OGL): both statements are a licence condition wherever the parcels are shown
+          map.addSource('context-parcels', { type: 'vector', tiles: [tileUrl('parcels')], attribution: INSPIRE_ATTRIBUTION });
           map.addLayer({ id: 'context-parcels', type: 'line', source: 'context-parcels', 'source-layer': sourceLayer('parcels'), minzoom: zoomRanges.parcels.minZoom, maxzoom: zoomRanges.parcels.maxZoom, layout: { visibility: visibilityFor('parcels') }, paint: { 'line-color': parcels.color, 'line-width': parcels.width, 'line-opacity': parcels.opacity } });
         };
         const addBuildings = () => {
@@ -808,6 +860,14 @@ function MapPanel({ workspaceId, contextLayers, sites, selected, onSelect, hover
         };
         config.layerOrder.forEach(key => (key === 'parcels' ? addParcels : key === 'buildings' ? addBuildings : () => {})());
       }
+      // Constraint layers sit above the context layers and below the site markers
+      constraintLayers.forEach(layer => {
+        const source = `constraint-${layer.source_id}`;
+        const visibility = constraintsOnRef.current[layer.source_id] ? 'visible' : 'none';
+        map.addSource(source, { type: 'vector', tiles: [`${window.location.origin}/api/workspaces/${workspaceId}/constraints/${layer.source_id}/{z}/{x}/{y}`] });
+        map.addLayer({ id: `${source}-fill`, type: 'fill', source, 'source-layer': layer.source_id, layout: { visibility }, paint: { 'fill-color': layer.colour, 'fill-opacity': 0.25 } });
+        map.addLayer({ id: `${source}-line`, type: 'line', source, 'source-layer': layer.source_id, layout: { visibility }, paint: { 'line-color': layer.colour, 'line-width': 1.2 } });
+      });
       map.addSource('sites', { type: 'geojson', data: geoJson, promoteId: 'id' });
       map.addLayer({ id: 'site-points', type: 'circle', source: 'sites', paint: {
         'circle-radius': ['case', ['get', 'selected'], 10, ['boolean', ['feature-state', 'hover'], false], 9, 7],
@@ -830,6 +890,27 @@ function MapPanel({ workspaceId, contextLayers, sites, selected, onSelect, hover
         const id = Number(event.features?.[0]?.properties?.id);
         if (id) onSelectRef.current(id);
       });
+      // Clicking a shaded constraint (not a site) names what's there
+      const constraintFillIds = constraintLayers.map(layer => `constraint-${layer.source_id}-fill`);
+      if (constraintFillIds.length) {
+        const constraintPopup = new maplibregl.Popup({ closeButton: true, offset: 6, className: 'site-tip', maxWidth: '280px' });
+        map.on('click', event => {
+          if (map.queryRenderedFeatures(event.point, { layers: ['site-points'] }).length) return;
+          const visibleIds = constraintFillIds.filter(id => map.getLayer(id) && map.getLayoutProperty(id, 'visibility') === 'visible');
+          const hits = visibleIds.length ? map.queryRenderedFeatures(event.point, { layers: visibleIds }) : [];
+          if (!hits.length) { constraintPopup.remove(); return; }
+          const content = document.createElement('div');
+          hits.slice(0, 4).forEach(feature => {
+            const layer = constraintLayers.find(item => feature.layer.id === `constraint-${item.source_id}-fill`);
+            const name = document.createElement('strong');
+            name.textContent = feature.properties.name || 'Unnamed area';
+            const meta = document.createElement('span');
+            meta.textContent = layer?.label || '';
+            content.append(name, meta);
+          });
+          constraintPopup.setLngLat(event.lngLat).setDOMContent(content).addTo(map);
+        });
+      }
     });
     popupRef.current = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 14, className: 'site-tip', maxWidth: '260px' });
     return () => { popupRef.current?.remove(); map.remove(); mapRef.current = null; readyRef.current = false; };
@@ -870,6 +951,18 @@ function MapPanel({ workspaceId, contextLayers, sites, selected, onSelect, hover
     });
     if (readyRef.current) applyVisibility(); else map.once('load', applyVisibility);
   }, [layerVisibility]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const applyConstraints = () => constraintLayers.forEach(layer => {
+      const visibility = constraintsOn[layer.source_id] ? 'visible' : 'none';
+      ['fill', 'line'].forEach(kind => {
+        const id = `constraint-${layer.source_id}-${kind}`;
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visibility);
+      });
+    });
+    if (readyRef.current) applyConstraints(); else map.once('load', applyConstraints);
+  }, [constraintsOn, constraintLayers]);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapConfig) return;
@@ -1070,8 +1163,8 @@ const APPRAISAL_LABELS = { requested: 'Appraisal requested', in_progress: 'Appra
 const APPRAISAL_RING = '#B6955B';
 const APPRAISAL_ADMIN_LABELS = { requested: 'Requested', in_progress: 'In progress', delivered: 'Delivered', cancelled: 'Cancelled' };
 const isOpenAppraisal = status => status === 'requested' || status === 'in_progress';
-const formatPence = pence => `£${(Number(pence) / 100).toLocaleString('en-GB', { maximumFractionDigits: 0 })}`;
-const currency = value => {
+export const formatPence = pence => `£${(Number(pence) / 100).toLocaleString('en-GB', { maximumFractionDigits: 0 })}`;
+export const currency = value => {
   const parsed = numberValue(value);
   return parsed === null ? null : `£${parsed.toLocaleString('en-GB', { maximumFractionDigits: 0 })}`;
 };
@@ -1206,7 +1299,7 @@ function Detail({ site, onStatus, onClose, appraisalOffer, onRequestAppraisal, o
 }
 
 const adminDate = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-const formatAdminDate = value => (value ? adminDate.format(new Date(value)) : '—');
+export const formatAdminDate = value => (value ? adminDate.format(new Date(value)) : '—');
 const slugify = value => value.toLowerCase().trim().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 const countCsvRows = text => Math.max(0, String(text || '').split(/\r?\n/).filter(line => line.trim()).length - 1);
 
@@ -1393,7 +1486,7 @@ function AdminOverview() {
       </div>
 
       {isAppraisals ? <div className="adm-table-wrap"><table className="adm-table">
-        <thead><tr><th>Site</th><th className="col-access">Requested by</th><th className="col-created">Requested</th><th className="num">Fee</th><th>Status</th></tr></thead>
+        <thead><tr><th>Site</th><th className="col-access">Requested by</th><th className="col-created">Requested</th><th className="num">Fee</th><th>Status</th><th><span className="visually-hidden">Actions</span></th></tr></thead>
         <tbody>
           {visibleRequests.map(request => <tr key={request.id} className={isOpenAppraisal(request.status) ? '' : 'is-closed'}>
             <td><Link className="adm-primary-cell" to={`/workspace/${request.workspace_id}`}><strong>{request.site_name}</strong><span>{[request.workspace_name, request.borough].filter(Boolean).join(' · ')}</span></Link>
@@ -1404,8 +1497,9 @@ function AdminOverview() {
             <td><select className="adm-status-select" aria-label={`Status for ${request.site_name}`} value={request.status} disabled={busy === `appraisal-${request.id}`} onChange={event => updateAppraisal(request.id, event.target.value)}>
               {Object.entries(APPRAISAL_ADMIN_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select></td>
+            <td className="adm-actions"><Link className="adm-btn adm-btn-ghost" to={`/admin/appraisal-requests/${request.id}/report`}><FileText size={13}/>Build report</Link></td>
           </tr>)}
-          {!visibleRequests.length && <tr className="adm-empty-row"><td colSpan={5}>
+          {!visibleRequests.length && <tr className="adm-empty-row"><td colSpan={6}>
             {requests.length ? <>No requests match “{query}”.</> : <>No appraisal requests yet. They appear here when a client requests one from the map.</>}
           </td></tr>}
         </tbody>
@@ -1417,7 +1511,10 @@ function AdminOverview() {
             <td className="num">{(workspace.site_count || 0).toLocaleString('en-GB')}</td>
             <td className="num col-members">{workspace.member_count || 0}</td>
             <td className="col-created">{formatAdminDate(workspace.created_at)}</td>
-            <td className="adm-actions"><Link className="adm-btn adm-btn-ghost" to={`/workspace/${workspace.id}`}>Open<ArrowRight size={13}/></Link></td>
+            <td className="adm-actions">
+              <Link className="adm-btn adm-btn-ghost" to={`/workspace/${workspace.id}?view=client`} title={`See ${workspace.name} as its members do`}><Eye size={13}/>View as client</Link>
+              <Link className="adm-btn adm-btn-ghost" to={`/workspace/${workspace.id}`}>Open<ArrowRight size={13}/></Link>
+            </td>
           </tr>)}
           {!visibleWorkspaces.length && <tr className="adm-empty-row"><td colSpan={5}>
             {workspaces.length ? <>No workspaces match “{query}”.</> : <>No client workspaces yet. <button className="adm-link-button" onClick={() => openSheet('workspace')}>Create the first one</button></>}
@@ -1544,7 +1641,7 @@ function AdminSheet({ title, description, onClose, footer, children }) {
 
 function App() {
   if (!supabase) return <ConfigurationNotice />;
-  return <AuthProvider><BrowserRouter><Routes><Route path="/sign-in" element={<SignInRoute/>}/><Route path="/sign-up" element={<SignUpRoute/>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="/workspace/:workspaceId" element={<ProtectedRoute><WorkspaceRoute/></ProtectedRoute>}/><Route path="*" element={<HomeRoute/>}/></Routes></BrowserRouter></AuthProvider>;
+  return <AuthProvider><BrowserRouter><Routes><Route path="/sign-in" element={<SignInRoute/>}/><Route path="/sign-up" element={<SignUpRoute/>}/><Route path="/admin/appraisal-requests/:requestId/report" element={<ProtectedRoute><ReportBuilderRoute/></ProtectedRoute>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="/workspace/:workspaceId" element={<ProtectedRoute><WorkspaceRoute/></ProtectedRoute>}/><Route path="*" element={<HomeRoute/>}/></Routes></BrowserRouter></AuthProvider>;
 }
 
 createRoot(document.getElementById('root')).render(<App />);

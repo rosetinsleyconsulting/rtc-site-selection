@@ -87,6 +87,20 @@ export const workspaceLayers = pgTable('workspace_layers', {
   workspaceRolePrimaryKey: primaryKey({ columns: [table.workspaceId, table.role] }),
 }));
 
+// Constraint layers (SSSI, green belt...) a workspace can switch on; any number per workspace.
+// Created by server/db/sql/2026-11-11-workspace-constraint-layers.sql. The constraint tile route refuses anything not listed.
+export const workspaceConstraintLayers = pgTable('workspace_constraint_layers', {
+  workspaceId: integer('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  sourceId: text('source_id').notNull(),
+  label: text('label').notNull(),
+  colour: text('colour').notNull().default('#8C7851'),
+  sortOrder: integer('sort_order').notNull().default(0),
+  section: text('section').notNull().default('Other'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, table => ({
+  workspaceSourcePrimaryKey: primaryKey({ columns: [table.workspaceId, table.sourceId] }),
+}));
+
 export const appraisalRequests = pgTable('appraisal_requests', {
   id: serial('id').primaryKey(),
   workspaceId: integer('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),

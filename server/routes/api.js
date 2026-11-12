@@ -5,6 +5,7 @@ import { appraisalRequests, memberships, pendingInvites, siteStatuses, sites, us
 import { parseCSV, toNullableNumber } from '../../src/lib/parseCsv.js';
 import { clearSessionCache, requirePlatformAdmin, requireUser } from '../auth.js';
 import { supabaseAdmin, supabaseConfigured } from '../supabase.js';
+import { spatialConfigured, spatialPool } from '../db/spatial.js';
 
 const router = express.Router();
 const validStatuses = new Set(['new', 'accepted', 'dismissed']);
@@ -299,16 +300,35 @@ router.get('/workspaces/:workspaceId/layers', async (req, res) => {
   const result = await req.app.locals.db.execute(sql`
     SELECT role, source_id, label FROM workspace_layers WHERE workspace_id = ${workspaceId} ORDER BY role
   `);
-  res.json({ layers: result.rows });
+  res.json({ layers: result.rows, constraints: await workspaceConstraints(req.app.locals.db, workspaceId) });
 });
+
+async function workspaceConstraints(db, workspaceId) {
+  try {
+    const result = await db.execute(sql`
+      SELECT source_id, label, colour, section FROM workspace_constraint_layers
+      WHERE workspace_id = ${workspaceId} ORDER BY sort_order, label
+    `);
+    return result.rows;
+  } catch (error) {
+    // Table not created yet in this database (see server/db/sql): behave as if no constraints are assigned
+    if ((error.cause?.code || error.code) === '42P01') return [];
+    throw error;
+  }
+}
+
+const parseTile = params => {
+  const [z, x, y] = [params.z, params.x, params.y].map(Number);
+  const ok = Number.isInteger(z) && z >= 0 && z <= 24 && [x, y].every(n => Number.isInteger(n) && n >= 0 && n < 2 ** z);
+  return ok ? { z, x, y } : null;
+};
 
 // Vector tiles, only for layers assigned to a workspace the user belongs to. Martin itself is not public.
 router.get('/workspaces/:workspaceId/tiles/:role/:z/:x/:y', async (req, res) => {
   const workspaceId = Number(req.params.workspaceId);
-  const [z, x, y] = [req.params.z, req.params.x, req.params.y].map(Number);
+  const tile = parseTile(req.params);
   const { role } = req.params;
-  const inRange = Number.isInteger(z) && z >= 0 && z <= 24 && [x, y].every(n => Number.isInteger(n) && n >= 0 && n < 2 ** z);
-  if (!Number.isInteger(workspaceId) || !layerRoles.has(role) || !inRange) return res.status(400).json({ error: 'Invalid tile request' });
+  if (!Number.isInteger(workspaceId) || !layerRoles.has(role) || !tile) return res.status(400).json({ error: 'Invalid tile request' });
   if (!(await hasWorkspaceAccess(req.app.locals.db, req.localUser, workspaceId))) {
     return res.status(403).json({ error: 'Workspace access required' });
   }
@@ -316,9 +336,26 @@ router.get('/workspaces/:workspaceId/tiles/:role/:z/:x/:y', async (req, res) => 
     SELECT source_id FROM workspace_layers WHERE workspace_id = ${workspaceId} AND role = ${role} LIMIT 1
   `);
   if (!layer.rows.length) return res.status(404).json({ error: 'Layer not available for this workspace' });
+  await proxyTile(res, layer.rows[0].source_id, tile);
+});
 
+// Constraint tiles: the source must be assigned to this workspace in workspace_constraint_layers
+router.get('/workspaces/:workspaceId/constraints/:sourceId/:z/:x/:y', async (req, res) => {
+  const workspaceId = Number(req.params.workspaceId);
+  const tile = parseTile(req.params);
+  const { sourceId } = req.params;
+  if (!Number.isInteger(workspaceId) || !/^[a-z0-9_]+$/.test(sourceId) || !tile) return res.status(400).json({ error: 'Invalid tile request' });
+  if (!(await hasWorkspaceAccess(req.app.locals.db, req.localUser, workspaceId))) {
+    return res.status(403).json({ error: 'Workspace access required' });
+  }
+  const assigned = (await workspaceConstraints(req.app.locals.db, workspaceId)).some(layer => layer.source_id === sourceId);
+  if (!assigned) return res.status(404).json({ error: 'Layer not available for this workspace' });
+  await proxyTile(res, sourceId, tile);
+});
+
+async function proxyTile(res, sourceId, { z, x, y }) {
   try {
-    const upstream = await fetch(`${MARTIN_URL}/${encodeURIComponent(layer.rows[0].source_id)}/${z}/${x}/${y}`);
+    const upstream = await fetch(`${MARTIN_URL}/${encodeURIComponent(sourceId)}/${z}/${x}/${y}`);
     // Tiles change rarely, but they belong to one client, so only the browser may cache them
     res.set('Cache-Control', 'private, max-age=600');
     if (upstream.status === 204) return res.status(204).end();
@@ -330,7 +367,7 @@ router.get('/workspaces/:workspaceId/tiles/:role/:z/:x/:y', async (req, res) => 
     console.error('Tile fetch failed:', error.message);
     res.status(502).json({ error: 'Tile server unavailable' });
   }
-});
+}
 
 router.patch('/admin/workspaces/:workspaceId/map-config', requirePlatformAdmin, async (req, res) => {
   const workspaceId = Number(req.params.workspaceId);
@@ -458,7 +495,8 @@ router.get('/admin/appraisal-requests', requirePlatformAdmin, async (req, res) =
   const result = await req.app.locals.db.execute(sql`
     SELECT
       ar.id, ar.status, ar.price_pence, ar.notes, ar.created_at, ar.updated_at,
-      s.id AS site_id, s.site_name, s.borough, s.category,
+      s.id AS site_id, s.site_name, s.borough, s.category, s.lat, s.lon,
+      s.footprint_m2, s.spare_land_on_title_m2, s.voa_rateable_value, s.voa_match_confidence, s.review_flag,
       w.id AS workspace_id, w.name AS workspace_name,
       u.email AS requested_by_email, u.name AS requested_by_name
     FROM appraisal_requests ar
@@ -468,6 +506,34 @@ router.get('/admin/appraisal-requests', requirePlatformAdmin, async (req, res) =
     ORDER BY (ar.status IN ('requested', 'in_progress')) DESC, ar.created_at DESC
   `);
   res.json({ requests: result.rows });
+});
+
+// Constraint check for the site behind an appraisal request: every registry layer, measured from the
+// site's confirmed boundary if it has one, otherwise its point. Features out to SITE_CHECK_MAX_M come back
+// with distances, so the report builder applies each layer's own search radius without asking again.
+const SITE_CHECK_MAX_M = 3000;
+router.get('/admin/appraisal-requests/:requestId/site-check', requirePlatformAdmin, async (req, res) => {
+  privateResponse(res);
+  const requestId = Number(req.params.requestId);
+  if (!Number.isInteger(requestId)) return res.status(400).json({ error: 'Invalid request' });
+  if (!spatialConfigured) return res.status(503).json({ error: 'Constraint data is not configured (SPATIAL_DATABASE_URL)' });
+  const found = await req.app.locals.db.execute(sql`
+    SELECT ar.workspace_id, s.id AS site_id, s.lat, s.lon
+    FROM appraisal_requests ar INNER JOIN sites s ON s.id = ar.site_id
+    WHERE ar.id = ${requestId} LIMIT 1
+  `);
+  const site = found.rows[0];
+  if (!site) return res.status(404).json({ error: 'Request not found' });
+  try {
+    const result = await spatialPool.query(
+      'SELECT meta.site_check($1, $2, $3, $4, $5) AS check',
+      [site.workspace_id, site.site_id, toNullableNumber(site.lon), toNullableNumber(site.lat), SITE_CHECK_MAX_M],
+    );
+    res.json({ siteCheck: result.rows[0].check });
+  } catch (error) {
+    console.error('Site check failed:', error.message);
+    res.status(502).json({ error: 'Unable to run the constraint check for this site' });
+  }
 });
 
 router.patch('/admin/appraisal-requests/:requestId', requirePlatformAdmin, async (req, res) => {

@@ -17,7 +17,8 @@ export async function ensureLocalUser(db, supabaseUser) {
     ON CONFLICT (supabase_user_id)
     DO UPDATE SET
       email = EXCLUDED.email,
-      name = EXCLUDED.name,
+      -- Supabase profiles usually carry no name; keep one set here rather than blanking it at every sign-in
+      name = COALESCE(NULLIF(EXCLUDED.name, ''), users.name),
       is_platform_admin = users.is_platform_admin OR EXCLUDED.is_platform_admin
     RETURNING id, supabase_user_id AS "supabaseUserId", email, name, is_platform_admin AS "isPlatformAdmin"
   `);

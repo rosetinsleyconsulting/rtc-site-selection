@@ -298,12 +298,19 @@ function ForgotPasswordRoute() {
 // Landing page for both invite and reset links. Only shown to a session that arrived from one of those links.
 function SetPasswordRoute() {
   const { session, loading } = useSession();
-  const navigate = useNavigate();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null); // 'invite' | 'reset' once the password is saved
   const reason = setPasswordReason();
+
+  if (done) return <AuthMessage title={done === 'invite' ? 'You’re all set' : 'Password changed'}>
+    <p>{done === 'invite'
+      ? 'Your password is saved. Use it with this email address whenever you sign in.'
+      : 'Your new password is saved and you’re signed in. Any other devices using the old password have been signed out.'}</p>
+    <Link className="auth-primary decision accept" to="/" replace>Continue to the portal</Link>
+  </AuthMessage>;
 
   if (loading) return <LoadingScreen label="Checking your link" />;
 
@@ -335,7 +342,8 @@ function SetPasswordRoute() {
     // A reset means the old password may be known to someone else: end any other signed-in sessions
     if (!invited) await supabase.auth.signOut({ scope: 'others' }).catch(() => {});
     clearSetPasswordReason();
-    navigate('/', { replace: true });
+    setBusy(false);
+    setDone(invited ? 'invite' : 'reset');
   };
 
   return <AuthForm

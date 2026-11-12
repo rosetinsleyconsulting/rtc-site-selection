@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigserial,
   boolean,
   doublePrecision,
   index,
@@ -116,6 +117,36 @@ export const appraisalRequests = pgTable('appraisal_requests', {
   // At most one open request per site
   openSiteUnique: uniqueIndex('appraisal_requests_open_site_idx').on(table.siteId).where(sql`status IN ('requested', 'in_progress')`),
   workspaceIdx: index('appraisal_requests_workspace_idx').on(table.workspaceId),
+}));
+
+// Append-only trail of admin and client actions. Created by server/db/sql/2026-11-12-audit-log.sql.
+export const auditLog = pgTable('audit_log', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  actorUserId: integer('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+  actorEmail: text('actor_email'),
+  action: text('action').notNull(),
+  workspaceId: integer('workspace_id'),
+  target: text('target'),
+  detail: jsonb('detail').notNull().default({}),
+  ip: text('ip'),
+}, table => ({
+  atIdx: index('audit_log_at_idx').on(table.at.desc()),
+  workspaceIdx: index('audit_log_workspace_idx').on(table.workspaceId, table.at.desc()),
+}));
+
+// Server errors (every 5xx the API sends). Same SQL file as audit_log.
+export const appEvents = pgTable('app_events', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  level: text('level').notNull(),
+  method: text('method'),
+  path: text('path'),
+  status: integer('status'),
+  message: text('message'),
+  userId: integer('user_id'),
+}, table => ({
+  atIdx: index('app_events_at_idx').on(table.at.desc()),
 }));
 
 export const siteStatuses = pgTable('site_statuses', {

@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { supabaseAdmin, supabaseConfigured } from './supabase.js';
+import { auditWithDb } from './audit.js';
 
 const configuredAdminEmails = (process.env.PLATFORM_ADMIN_EMAILS || 'eilish@rosetinsleyconsulting.com')
   .split(',')
@@ -20,20 +21,25 @@ export async function ensureLocalUser(db, supabaseUser) {
       -- Supabase profiles usually carry no name; keep one set here rather than blanking it at every sign-in
       name = COALESCE(NULLIF(EXCLUDED.name, ''), users.name),
       is_platform_admin = users.is_platform_admin OR EXCLUDED.is_platform_admin
-    RETURNING id, supabase_user_id AS "supabaseUserId", email, name, is_platform_admin AS "isPlatformAdmin"
+    RETURNING id, supabase_user_id AS "supabaseUserId", email, name, is_platform_admin AS "isPlatformAdmin",
+              (xmax = 0) AS "isNew"
   `);
-  const localUser = result.rows[0];
+  const { isNew, ...localUser } = result.rows[0];
+  if (isNew) await auditWithDb(db, 'user.first_sign_in', { actor: localUser, target: email });
 
   const pending = await db.execute(sql`
     DELETE FROM pending_invites WHERE email = ${email} RETURNING workspace_id
   `);
-  const invitedWorkspaceId = pending.rows[0]?.workspace_id;
-  if (Number.isInteger(invitedWorkspaceId)) {
-    await db.execute(sql`
-      INSERT INTO memberships (user_id, workspace_id)
-      VALUES (${localUser.id}, ${invitedWorkspaceId})
-      ON CONFLICT DO NOTHING
-    `);
+  if (pending.rows.length) {
+    const invitedWorkspaceId = pending.rows[0].workspace_id;
+    if (Number.isInteger(invitedWorkspaceId)) {
+      await db.execute(sql`
+        INSERT INTO memberships (user_id, workspace_id)
+        VALUES (${localUser.id}, ${invitedWorkspaceId})
+        ON CONFLICT DO NOTHING
+      `);
+    }
+    await auditWithDb(db, 'invite.accepted', { actor: localUser, target: email, workspaceId: invitedWorkspaceId ?? null });
   }
 
   return localUser;

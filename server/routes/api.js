@@ -6,6 +6,7 @@ import { parseCSV, toNullableNumber } from '../../src/lib/parseCsv.js';
 import { clearSessionCache, requirePlatformAdmin, requireUser } from '../auth.js';
 import { supabaseAdmin, supabaseConfigured } from '../supabase.js';
 import { spatialConfigured, spatialPool } from '../db/spatial.js';
+import { audit } from '../audit.js';
 
 const router = express.Router();
 const validStatuses = new Set(['new', 'accepted', 'dismissed']);
@@ -255,6 +256,7 @@ router.post('/workspaces/:workspaceId/sites/:siteId/appraisal-requests', apprais
       .values({ workspaceId, siteId, requestedBy: req.localUser.id, pricePence: APPRAISAL_OFFER.pricePence, notes })
       .returning();
     // TODO: email RTC (hello@) about the new request once the app can send mail.
+    await audit(req, 'appraisal.requested', { workspaceId, target: `site ${siteId}`, detail: { requestId: request.id, pricePence: request.pricePence } });
     res.status(201).json({ request });
   } catch (error) {
     if (isUniqueViolation(error)) return res.status(409).json({ error: 'An appraisal has already been requested for this site' });
@@ -277,6 +279,7 @@ router.post('/workspaces/:workspaceId/appraisal-requests/:requestId/cancel', asy
     RETURNING id, site_id, status
   `);
   if (!result.rows.length) return res.status(409).json({ error: 'This request can no longer be withdrawn' });
+  await audit(req, 'appraisal.withdrawn', { workspaceId, target: `site ${result.rows[0].site_id}`, detail: { requestId } });
   res.json({ request: result.rows[0] });
 });
 
@@ -361,12 +364,16 @@ async function proxyTile(res, sourceId, { z, x, y }) {
     // Tiles change rarely, but they belong to one client, so only the browser may cache them
     res.set('Cache-Control', 'private, max-age=600');
     if (upstream.status === 204) return res.status(204).end();
-    if (!upstream.ok) return res.status(502).json({ error: 'Tile server error' });
+    if (!upstream.ok) {
+      res.locals.errorMessage = `Martin returned ${upstream.status} for ${sourceId}`;
+      return res.status(502).json({ error: 'Tile server error' });
+    }
     // fetch has already decompressed the body, so the upstream Content-Encoding is not passed on
     res.set('Content-Type', upstream.headers.get('content-type') || 'application/x-protobuf');
     res.send(Buffer.from(await upstream.arrayBuffer()));
   } catch (error) {
     console.error('Tile fetch failed:', error.message);
+    res.locals.errorMessage = `Martin unreachable: ${error.message}`;
     res.status(502).json({ error: 'Tile server unavailable' });
   }
 }
@@ -382,6 +389,7 @@ router.patch('/admin/workspaces/:workspaceId/map-config', requirePlatformAdmin, 
     .where(sql`${workspaces.id} = ${workspaceId}`)
     .returning({ id: workspaces.id, mapConfig: workspaces.mapConfig });
   if (!result.length) return res.status(404).json({ error: 'Workspace not found' });
+  await audit(req, 'workspace.map_config_changed', { workspaceId, target: 'map settings' });
   res.json({ mapConfig: mergeMapConfig(result[0].mapConfig) });
 });
 
@@ -484,6 +492,7 @@ router.post('/admin/workspaces', requirePlatformAdmin, async (req, res) => {
       await tx.insert(sites).values(rows.map(row => siteInsertValues(created[0].id, row)));
       return created[0];
     });
+    await audit(req, 'workspace.created', { workspaceId: workspace.id, target: workspace.name, detail: { slug: workspace.slug, sites: rows.length } });
     res.status(201).json({ workspace });
   } catch (error) {
     if (isUniqueViolation(error)) return res.status(409).json({ error: 'That workspace slug already exists' });
@@ -535,6 +544,7 @@ router.get('/admin/appraisal-requests/:requestId/site-check', requirePlatformAdm
     res.json({ siteCheck: result.rows[0].check });
   } catch (error) {
     console.error('Site check failed:', error.message);
+    res.locals.errorMessage = `Site check failed: ${error.message}`;
     res.status(502).json({ error: 'Unable to run the constraint check for this site' });
   }
 });
@@ -547,10 +557,12 @@ router.patch('/admin/appraisal-requests/:requestId', requirePlatformAdmin, async
     const result = await req.app.locals.db.execute(sql`
       UPDATE appraisal_requests SET status = ${status}, updated_at = now()
       WHERE id = ${requestId}
-      RETURNING id, status
+      RETURNING id, status, workspace_id, site_id
     `);
     if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
-    res.json({ request: result.rows[0] });
+    const { workspace_id: workspaceId, site_id: siteId, ...request } = result.rows[0];
+    await audit(req, 'appraisal.status_changed', { workspaceId, target: `site ${siteId}`, detail: { requestId, status } });
+    res.json({ request });
   } catch (error) {
     if (isUniqueViolation(error)) return res.status(409).json({ error: 'This site already has another open request' });
     console.error('Appraisal status update failed:', error);
@@ -637,16 +649,20 @@ router.post('/admin/users/invite', requirePlatformAdmin, authEmailLimit, async (
       set: { workspaceId },
     });
     const outcome = await sendInviteOrFreshLink(email, req);
+    await audit(req, 'user.invited', { workspaceId, target: email, detail: { outcome } });
     res.status(201).json({ email, workspaceId, outcome });
   } catch (error) {
     console.error('Invitation failed:', error);
+    res.locals.errorMessage = `Invitation failed: ${error.message}`;
     res.status(502).json({ error: 'Unable to send invitation' });
   }
 });
 
 router.delete('/admin/pending-invites/:email', requirePlatformAdmin, async (req, res) => {
   const email = String(req.params.email || '').trim().toLowerCase();
-  await req.app.locals.db.delete(pendingInvites).where(sql`${pendingInvites.email} = ${email}`);
+  const removed = await req.app.locals.db.delete(pendingInvites).where(sql`${pendingInvites.email} = ${email}`)
+    .returning({ workspaceId: pendingInvites.workspaceId });
+  if (removed.length) await audit(req, 'invite.cancelled', { workspaceId: removed[0].workspaceId, target: email });
   res.status(204).end();
 });
 
@@ -662,8 +678,10 @@ router.post('/admin/users/:userId/password-reset', requirePlatformAdmin, authEma
   const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo: setPasswordUrl(req) });
   if (error) {
     console.error('Password reset email failed:', error);
+    res.locals.errorMessage = `Password reset email failed: ${error.message}`;
     return res.status(502).json({ error: 'Unable to send the reset email' });
   }
+  await audit(req, 'user.password_reset_sent', { target: email, detail: { userId } });
   res.status(202).json({ email });
 });
 
@@ -677,7 +695,9 @@ router.post('/admin/users/:userId/memberships', requirePlatformAdmin, async (req
       (SELECT id FROM workspaces WHERE id = ${workspaceId}) AS workspace_id
   `);
   if (!result.rows[0]?.user_id || !result.rows[0]?.workspace_id) return res.status(404).json({ error: 'User or workspace not found' });
-  await req.app.locals.db.insert(memberships).values({ userId, workspaceId }).onConflictDoNothing();
+  const added = await req.app.locals.db.insert(memberships).values({ userId, workspaceId }).onConflictDoNothing()
+    .returning({ userId: memberships.userId });
+  if (added.length) await audit(req, 'membership.added', { workspaceId, target: await userEmail(req, userId), detail: { userId } });
   res.status(201).json({ userId, workspaceId });
 });
 
@@ -685,7 +705,13 @@ router.delete('/admin/users/:userId/memberships/:workspaceId', requirePlatformAd
   const userId = Number(req.params.userId);
   const workspaceId = Number(req.params.workspaceId);
   if (!Number.isInteger(userId) || !Number.isInteger(workspaceId)) return res.status(400).json({ error: 'Invalid user or workspace id' });
-  await req.app.locals.db.delete(memberships).where(sql`${memberships.userId} = ${userId} AND ${memberships.workspaceId} = ${workspaceId}`);
+  const removed = await req.app.locals.db.delete(memberships)
+    .where(sql`${memberships.userId} = ${userId} AND ${memberships.workspaceId} = ${workspaceId}`)
+    .returning({ userId: memberships.userId });
+  if (removed.length) {
+    clearSessionCache();
+    await audit(req, 'membership.removed', { workspaceId, target: await userEmail(req, userId), detail: { userId } });
+  }
   res.status(204).end();
 });
 
@@ -700,7 +726,43 @@ router.patch('/admin/users/:userId', requirePlatformAdmin, async (req, res) => {
     .returning({ id: users.id, isPlatformAdmin: users.isPlatformAdmin });
   if (!result.length) return res.status(404).json({ error: 'User not found' });
   clearSessionCache();
+  await audit(req, result[0].isPlatformAdmin ? 'user.admin_granted' : 'user.admin_removed', { target: await userEmail(req, userId), detail: { userId } });
   res.json(result[0]);
+});
+
+async function userEmail(req, userId) {
+  const result = await req.app.locals.db.execute(sql`SELECT email FROM users WHERE id = ${userId}`);
+  return result.rows[0]?.email || `user ${userId}`;
+}
+
+// Activity tab: the audit trail, newest first, optionally for one workspace. Older entries load by passing
+// the oldest id shown as ?before=.
+router.get('/admin/activity', requirePlatformAdmin, async (req, res) => {
+  privateResponse(res);
+  const workspaceId = req.query.workspaceId ? Number(req.query.workspaceId) : null;
+  const before = req.query.before ? Number(req.query.before) : null;
+  if ((workspaceId !== null && !Number.isInteger(workspaceId)) || (before !== null && !Number.isInteger(before))) {
+    return res.status(400).json({ error: 'Invalid filter' });
+  }
+  const limit = 100;
+  const [entries, errors] = await Promise.all([
+    req.app.locals.db.execute(sql`
+      SELECT a.id, a.at, a.action, a.actor_email, a.target, a.detail, a.workspace_id, w.name AS workspace_name
+      FROM audit_log a LEFT JOIN workspaces w ON w.id = a.workspace_id
+      WHERE (${workspaceId}::int IS NULL OR a.workspace_id = ${workspaceId})
+        AND (${before}::bigint IS NULL OR a.id < ${before})
+      ORDER BY a.id DESC
+      LIMIT ${limit + 1}
+    `),
+    req.app.locals.db.execute(sql`
+      SELECT count(*)::int AS last_24h, max(at) AS latest FROM app_events WHERE at > now() - interval '24 hours'
+    `),
+  ]);
+  res.json({
+    entries: entries.rows.slice(0, limit),
+    hasMore: entries.rows.length > limit,
+    serverErrors: errors.rows[0],
+  });
 });
 
 export default router;

@@ -14,6 +14,7 @@ import {
   Eye,
   FileText,
   GripVertical,
+  History,
   KeyRound,
   Layers3,
   List,
@@ -1557,13 +1558,15 @@ function AdminOverview() {
 
   const isClients = section === 'clients';
   const isAppraisals = section === 'appraisals';
-  const sectionTitle = { clients: 'Client workspaces', people: 'People & access', appraisals: 'Site appraisals' }[section];
+  const isActivity = section === 'activity';
+  const sectionTitle = { clients: 'Client workspaces', people: 'People & access', appraisals: 'Site appraisals', activity: 'Activity' }[section];
   const sheetError = error && <div className="adm-notice is-error" role="alert"><AlertCircle size={15}/><span>{error}</span></div>;
 
   const navItems = [
     { key: 'clients', label: 'Client workspaces', icon: Building2, count: workspaces.length },
     { key: 'people', label: 'People & access', icon: Users, count: pendingInvites.length ? `${users.length} + ${pendingInvites.length} invited` : users.length },
     { key: 'appraisals', label: 'Site appraisals', icon: ClipboardList, count: openRequests ? `${openRequests} open` : requests.length, highlight: openRequests > 0 },
+    { key: 'activity', label: 'Activity', icon: History },
   ];
 
   return <div className="app-shell adm-shell" data-theme={theme}>
@@ -1577,7 +1580,7 @@ function AdminOverview() {
         </div>
         <nav className="adm-nav" aria-label="Admin sections">
           {navItems.map(({ key, label, icon: Icon, count, highlight }) => <button type="button" key={key} className={section === key ? 'active' : ''} aria-current={section === key ? 'page' : undefined} onClick={() => showSection(key)}>
-            <Icon size={16}/><span>{label}</span><b className={highlight ? 'is-highlight' : ''}>{count}</b>
+            <Icon size={16}/><span>{label}</span>{count !== undefined && <b className={highlight ? 'is-highlight' : ''}>{count}</b>}
           </button>)}
         </nav>
       </div>
@@ -1591,11 +1594,13 @@ function AdminOverview() {
         <button className="mobile-menu-button" onClick={() => setMobileMenu(true)} aria-label="Open menu"><Menu size={20}/></button>
         <div className="adm-title">
           <h1>{sectionTitle}</h1>
-          {isAppraisals
+          {isActivity
+            ? <p className="standfirst">Who did what in the portal: invites, access changes, appraisal requests and status changes. Entries can't be edited and are kept for two years.</p>
+            : isAppraisals
             ? <p className="standfirst"><b>{openRequests}</b> open {openRequests === 1 ? 'request' : 'requests'} out of <b>{requests.length}</b> in total. Clients request these from the site panel on the map.</p>
             : <p className="standfirst"><b>{workspaces.length}</b> client {workspaces.length === 1 ? 'workspace' : 'workspaces'} holding <b>{totalSites.toLocaleString('en-GB')}</b> sites, with <b>{users.length}</b> {users.length === 1 ? 'person' : 'people'} who can sign in.</p>}
         </div>
-        {!isAppraisals && <button className="adm-btn adm-btn-primary" onClick={() => openSheet(isClients ? 'workspace' : 'invite')}>
+        {!isAppraisals && !isActivity && <button className="adm-btn adm-btn-primary" onClick={() => openSheet(isClients ? 'workspace' : 'invite')}>
           <Plus size={14} strokeWidth={2.25}/>{isClients ? 'New workspace' : 'Invite person'}
         </button>}
       </header>
@@ -1605,6 +1610,7 @@ function AdminOverview() {
         <button onClick={() => { setNotice(''); setError(''); }} aria-label="Dismiss"><X size={14}/></button>
       </div>}
 
+      {isActivity ? <AdminActivity workspaces={workspaces}/> : <>
       <div className="adm-toolbar">
         <label className="adm-search">
           <Search size={14}/>
@@ -1674,6 +1680,7 @@ function AdminOverview() {
           </td></tr>}
         </tbody>
       </table></div>}
+      </>}
     </main>
 
     {sheet === 'workspace' && <AdminSheet title="New workspace" description="Each workspace holds one client's site shortlist, kept separate from every other client." onClose={closeSheet}
@@ -1739,6 +1746,96 @@ function AdminOverview() {
       </div>
     </AdminSheet>}
   </div>;
+}
+
+// Audit trail wording. Anything not listed shows its raw action name, so a new server action is never hidden.
+const ACTIVITY_LABELS = {
+  'user.first_sign_in': () => 'Signed in for the first time',
+  'invite.accepted': () => 'Accepted their invite',
+  'user.invited': detail => (detail?.outcome === 'link-resent' ? 'Sent a new set-password link to' : 'Invited'),
+  'invite.cancelled': () => 'Cancelled the invite for',
+  'user.password_reset_sent': () => 'Sent a password reset to',
+  'membership.added': () => 'Gave workspace access to',
+  'membership.removed': () => 'Removed workspace access from',
+  'user.admin_granted': () => 'Made admin:',
+  'user.admin_removed': () => 'Removed admin access from',
+  'workspace.created': detail => `Created workspace${detail?.sites ? ` with ${detail.sites} sites:` : ':'}`,
+  'workspace.map_config_changed': () => 'Changed the map settings',
+  'appraisal.requested': () => 'Requested an appraisal for',
+  'appraisal.withdrawn': () => 'Withdrew the appraisal request for',
+  'appraisal.status_changed': detail => `Marked the appraisal ${(APPRAISAL_ADMIN_LABELS[detail?.status] || detail?.status || '').toLowerCase()} for`,
+};
+const activityTime = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+// Targets that only repeat the actor ("Signed in for the first time" by x, target x) aren't shown twice
+const SELF_TARGET_ACTIONS = new Set(['user.first_sign_in', 'invite.accepted', 'workspace.map_config_changed']);
+
+function AdminActivity({ workspaces }) {
+  const [entries, setEntries] = useState([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [serverErrors, setServerErrors] = useState(null);
+  const [workspaceId, setWorkspaceId] = useState('');
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = async ({ before } = {}) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      if (workspaceId) params.set('workspaceId', workspaceId);
+      if (before) params.set('before', before);
+      const response = await api(`/api/admin/activity?${params}`);
+      setEntries(current => (before ? [...current, ...response.entries] : response.entries));
+      setHasMore(response.hasMore);
+      setServerErrors(response.serverErrors);
+    } catch (loadError) { setError(loadError.message); } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [workspaceId]);
+
+  const needle = normalize(query.trim());
+  const visible = entries.filter(entry => !needle || normalize(`${entry.actor_email} ${entry.target} ${entry.workspace_name} ${entry.action}`).includes(needle));
+  const errorCount = serverErrors?.last_24h || 0;
+
+  return <>
+    {errorCount > 0 && <div className="adm-notice is-error" role="status"><AlertCircle size={15}/>
+      <span>{errorCount} server {errorCount === 1 ? 'error' : 'errors'} in the last 24 hours. The Data freshness dashboard in Grafana has the detail.</span></div>}
+    {error && <div className="adm-notice is-error" role="alert"><AlertCircle size={15}/><span>{error}</span></div>}
+    <div className="adm-toolbar">
+      <label className="adm-search">
+        <Search size={14}/>
+        <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search people or targets" aria-label="Search activity"/>
+        {query && <button onClick={() => setQuery('')} aria-label="Clear search"><X size={13}/></button>}
+      </label>
+      <select className="adm-status-select" value={workspaceId} onChange={event => setWorkspaceId(event.target.value)} aria-label="Filter by workspace">
+        <option value="">All workspaces</option>
+        {workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+      </select>
+      <span className="adm-count">{visible.length} of {entries.length}{hasMore ? '+' : ''}</span>
+    </div>
+    <div className="adm-table-wrap"><table className="adm-table">
+      <thead><tr><th className="col-created">When</th><th>What happened</th><th className="col-access">Workspace</th></tr></thead>
+      <tbody>
+        {visible.map(entry => {
+          const label = ACTIVITY_LABELS[entry.action]?.(entry.detail) || entry.action;
+          const showTarget = entry.target && !SELF_TARGET_ACTIONS.has(entry.action);
+          return <tr key={entry.id}>
+            <td className="col-created">{activityTime.format(new Date(entry.at))}</td>
+            <td><span className="adm-primary-cell"><strong>{label}{showTarget ? ` ${entry.target}` : ''}</strong><span>{entry.actor_email ? `by ${entry.actor_email}` : 'by the system'}</span></span></td>
+            <td className="col-access">{entry.workspace_name || (entry.workspace_id ? <span className="adm-muted">Deleted workspace {entry.workspace_id}</span> : <span className="adm-muted">—</span>)}</td>
+          </tr>;
+        })}
+        {!loading && !visible.length && <tr className="adm-empty-row"><td colSpan={3}>
+          {entries.length ? <>No activity matches “{query}”.</> : <>Nothing recorded yet. Invites, access changes and appraisal requests appear here as they happen.</>}
+        </td></tr>}
+      </tbody>
+    </table></div>
+    {(hasMore || loading) && <div className="adm-load-more">
+      <button className="adm-btn adm-btn-ghost" disabled={loading} onClick={() => load({ before: entries[entries.length - 1]?.id })}>
+        {loading && <LoaderCircle className="spin" size={13}/>}{loading ? 'Loading' : 'Load older activity'}
+      </button>
+    </div>}
+  </>;
 }
 
 function AccessSummary({ memberships, isAdmin }) {

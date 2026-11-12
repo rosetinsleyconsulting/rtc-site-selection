@@ -229,6 +229,9 @@ h1 { margin: 8px 0 5px; font: 700 clamp(30px, 4vw, 52px)/.98 var(--font-display)
 .adm-search button { position: absolute; right: 6px; display: inline-grid; place-items: center; padding: 4px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); }
 .adm-search button:hover { background: rgba(69,78,58,.08); color: var(--charcoal); }
 .adm-count { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Activity tab: workspace filter sits beside the search; "Load older" under the table */
+.adm-toolbar .adm-status-select { height: 36px; margin-right: auto; }
+.adm-load-more { display: flex; justify-content: center; padding: 14px 0 4px; }
 
 .adm-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: #fbfcf6; box-shadow: var(--shadow-sm); scrollbar-width: thin; scrollbar-color: #b5bea5 transparent; }
 .adm-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }

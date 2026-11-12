@@ -11,6 +11,12 @@ services:
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
     image: rtc-site-selection:latest
     restart: unless-stopped
+    # Logs survive restarts but are capped at 10 x 20 MB. Errors also go to the app_events table.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "10"
     ports:
       - "127.0.0.1:5010:5000"
     environment:

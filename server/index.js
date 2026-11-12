@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { db, pool } from './db/index.js';
 import apiRouter from './routes/api.js';
+import { apiErrorHandler, recordServerErrors } from './audit.js';
 import { supabaseConfigured } from './supabase.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -61,7 +62,7 @@ app.get('/api/health', async (req, res) => {
     res.status(503).json({ ok: false, supabaseConfigured, error: 'Database unavailable' });
   }
 });
-app.use('/api', apiRouter);
+app.use('/api', recordServerErrors, apiRouter, apiErrorHandler);
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(root, 'dist')));

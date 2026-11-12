@@ -26,7 +26,7 @@ Data-confidence-aware shortlisting: every site record surfaces not just the numb
 ## Operating Context
 
 - Multi-tenant: `workspaces` + `memberships` scope every site and status to a specific client engagement.
-- Auth via Clerk (`@clerk/clerk-react`, `@clerk/express`, `@clerk/backend`); the app shows a configuration notice until Clerk keys are set.
+- Auth via Supabase Auth (`@supabase/supabase-js`): invite-only (public sign-up off), password sign-in, reset links via `/forgot-password` and `/set-password`. Email is sent through Resend as custom SMTP. The server verifies each request's token with the Supabase service key (`server/auth.js`). The app shows a configuration notice until the Supabase keys are set.
 - Map view built on MapLibre GL; site list/filter alongside it.
 - Backend: Express + Drizzle ORM over Postgres (`server/db/schema.js`, `server/routes/api.js`).
 - Data ingestion includes CSV parsing (`src/lib/parseCsv.js`) and a seed script (`server/seed-workspace.js`, takes a CSV path, slug and name).

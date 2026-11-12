@@ -29,7 +29,7 @@ Data-confidence-aware shortlisting: every site record surfaces not just the numb
 - Auth via Clerk (`@clerk/clerk-react`, `@clerk/express`, `@clerk/backend`); the app shows a configuration notice until Clerk keys are set.
 - Map view built on MapLibre GL; site list/filter alongside it.
 - Backend: Express + Drizzle ORM over Postgres (`server/db/schema.js`, `server/routes/api.js`).
-- Data ingestion includes CSV parsing (`src/lib/parseCsv.js`) and a seed script (`server/seed-lowlu.js`).
+- Data ingestion includes CSV parsing (`src/lib/parseCsv.js`) and a seed script (`server/seed-workspace.js`, takes a CSV path, slug and name).
 
 ## Capabilities and Constraints
 

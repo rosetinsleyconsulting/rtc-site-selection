@@ -1,23 +1,32 @@
+// One-off: create a workspace (if missing) and load its site list from a CSV export.
+// Skips the insert if the workspace already has sites.
+//   npm run seed:workspace -- <path/to/sites.csv> <slug> "<Workspace name>"
+// Client CSVs live in the client's folder in OneDrive, never in this repo.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
 import { db, pool } from './db/index.js';
 import { sites, workspaces } from './db/schema.js';
 import { parseCSV } from '../src/lib/parseCsv.js';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const csvPath = path.join(root, 'attached_assets', '0_lowlu_final_sites_export_1787904911415.csv');
-const csvText = await fs.readFile(csvPath, 'utf8');
+const [csvArg, slug, name] = process.argv.slice(2);
+if (!csvArg || !slug || !name) {
+  console.error('Usage: npm run seed:workspace -- <path/to/sites.csv> <slug> "<Workspace name>"');
+  process.exit(1);
+}
+
+const csvText = await fs.readFile(path.resolve(csvArg), 'utf8');
 const rows = parseCSV(csvText);
 
-const existing = await db.execute(sql`SELECT id FROM workspaces WHERE slug = 'lowlu' LIMIT 1`);
+const existing = await db.execute(sql`SELECT id FROM workspaces WHERE slug = ${slug} LIMIT 1`);
 let workspaceId = existing.rows[0]?.id;
 
 if (!workspaceId) {
-  const created = await db.insert(workspaces).values({ name: 'Lowlu', slug: 'lowlu' }).returning({ id: workspaces.id });
+  const created = await db.insert(workspaces).values({ name, slug }).returning({ id: workspaces.id });
   workspaceId = created[0].id;
 }
+
+const toArea = value => (value && !value.toLowerCase().includes('n/a') ? Number(value) : null);
 
 const siteCount = await db.execute(sql`SELECT COUNT(*)::int AS count FROM sites WHERE workspace_id = ${workspaceId}`);
 if (Number(siteCount.rows[0]?.count || 0) === 0) {
@@ -28,8 +37,8 @@ if (Number(siteCount.rows[0]?.count || 0) === 0) {
     siteName: row.site_name || '',
     category: row.category || '',
     priority: row.priority || '',
-    footprintM2: row.footprint_m2 && !row.footprint_m2.toLowerCase().includes('n/a') ? Number(row.footprint_m2) : null,
-    spareLandOnTitleM2: row.spare_land_on_title_m2 && !row.spare_land_on_title_m2.toLowerCase().includes('n/a') ? Number(row.spare_land_on_title_m2) : null,
+    footprintM2: toArea(row.footprint_m2),
+    spareLandOnTitleM2: toArea(row.spare_land_on_title_m2),
     voaRateableValue: row.voa_rateable_value ? Number(row.voa_rateable_value) || null : null,
     voaMatchConfidence: row.voa_match_confidence || null,
     nearbyPlanningApplications: row.nearby_planning_applications || null,
@@ -40,9 +49,9 @@ if (Number(siteCount.rows[0]?.count || 0) === 0) {
     lon: Number(row.lon) || null,
   }));
   await db.insert(sites).values(values);
-  console.log(`Seeded ${values.length} Lowlu sites.`);
+  console.log(`Seeded ${values.length} sites into workspace "${slug}" (id ${workspaceId}).`);
 } else {
-  console.log('Lowlu workspace already contains sites; seed skipped.');
+  console.log(`Workspace "${slug}" already contains sites; seed skipped.`);
 }
 
 await pool.end();

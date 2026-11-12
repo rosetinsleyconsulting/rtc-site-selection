@@ -13,6 +13,23 @@ export const CHECK_STATUS = {
   unknown: { label: 'No data', colour: '#9D9D91', ink: '#74786D', rank: 3 },
 };
 
+// Starting search distance per loaded layer, for the Urban and Rural presets. The analyst can change any of them
+// per report. The methodology page prints this table, so it always matches what the report builder uses.
+export const RADIUS_RULES = [
+  { label: 'Conservation areas and Article 4 directions', urbanM: 100, ruralM: 250,
+    matches: layer => layer.layer === 'hist.conservation_area' || layer.layer === 'hist.conservation_area_pd' || layer.layer === 'planning.article_4' },
+  { label: 'Other heritage, Green Belt, groundwater protection zones and main rivers', urbanM: 250, ruralM: 500,
+    matches: layer => layer.report_section === 'Heritage' || ['env.green_belt', 'env.groundwater_spz', 'env.main_river'].includes(layer.layer) },
+  { label: 'Everything else: nature designations, flood risk, landscape and planning layers', urbanM: 500, ruralM: 2000,
+    matches: () => true },
+];
+export function defaultRadii(layer) {
+  const { urbanM, ruralM } = RADIUS_RULES.find(rule => rule.matches(layer));
+  return { urbanM, ruralM };
+}
+// How far out the site check looks for context, whatever the search distance (SITE_CHECK_MAX_M on the server)
+export const CHECK_EXTENT_M = 3000;
+
 export const metres = value => `${Math.round(Number(value)).toLocaleString('en-GB')} m`;
 const named = feature => feature.name || 'Unnamed area';
 

@@ -4,7 +4,7 @@ import { ArrowLeft, Globe, Printer, RotateCcw } from 'lucide-react';
 import * as maplibregl from 'maplibre-gl';
 import { api, area, currency, ErrorScreen, LoadingScreen, PanelBackground, SignOutButton, ThemeToggle, formatAdminDate, usePanelTheme } from './main.jsx';
 import './report-builder.css';
-import { CHECK_STATUS, assessLayer, extendBounds, mapFeatures, metres, summarise } from './lib/siteCheck.js';
+import { CHECK_STATUS, assessLayer, defaultRadii, extendBounds, mapFeatures, metres, summarise } from './lib/siteCheck.js';
 
 // One colour per section, reused for its buffer circle on the map and its legend swatch (mock / placeholder
 // mode only; with real data the map colours by result instead). Hex values match the --teal/--rye/
@@ -84,12 +84,6 @@ const PRESETS = [
 // meta.layer_registry report_section -> builder section key
 const REGISTRY_SECTIONS = { Environment: 'env', Heritage: 'hist', 'Planning metrics': 'planning', Transport: 'transport', 'Land Registry': 'lr', 'Land comps': 'comps' };
 
-// Default search radius per loaded layer (placeholders, as above)
-function defaultRadii(layer) {
-  if (layer.layer === 'hist.conservation_area' || layer.layer === 'planning.article_4') return { urbanM: 100, ruralM: 250 };
-  if (layer.report_section === 'Heritage' || layer.layer === 'env.green_belt' || layer.layer === 'env.groundwater_spz' || layer.layer === 'env.main_river') return { urbanM: 250, ruralM: 500 };
-  return { urbanM: 500, ruralM: 2000 };
-}
 
 // siteCheck is the result of /api/admin/appraisal-requests/:id/site-check, or null (mock mode / check failed),
 // in which case the builder behaves as the original wireframe.
@@ -425,13 +419,33 @@ function ReportBasis({ siteCheck, sections }) {
 }
 
 // Closing block: every dataset the report relied on, by publisher, with its data date
+// Licence, exact attribution and caveats per dataset, from the same catalogue as the portal's /data page
+// (meta.data_catalogue). Keyed by layer (env.sssi). Empty map if it can't be loaded, so the report still renders.
+function useCatalogue() {
+  const [catalogue, setCatalogue] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api('/api/data-sources')
+      .then(response => live && setCatalogue(new Map((response.layers || []).map(layer => [layer.layer, layer]))))
+      .catch(() => live && setCatalogue(new Map()));
+    return () => { live = false; };
+  }, []);
+  return catalogue;
+}
+
 function ReportSources({ sections }) {
+  const catalogue = useCatalogue();
   const used = sections.flatMap(section => section.layers).filter(layer => layer.included && layer.check);
   if (!used.length) return null;
   const byPublisher = used.reduce((groups, layer) => {
     const publisher = layer.check.publisher || 'Unknown publisher';
     return groups.set(publisher, [...(groups.get(publisher) || []), layer]);
   }, new Map());
+  const entries = used.map(layer => catalogue?.get(layer.check.layer)).filter(Boolean);
+  // Several layers share one statement (all EA layers, say): print each statement once
+  const attributions = [...new Set(entries.map(entry => entry.attribution).filter(Boolean))];
+  const caveats = entries.filter(entry => entry.caveats);
+  const missing = catalogue && entries.length < used.length;
   return <section className="rb-sources">
     <h2>Data sources</h2>
     <ul>
@@ -440,7 +454,15 @@ function ReportSources({ sections }) {
         {layers[0].check.data_as_at && <small> (as at {formatAdminDate(layers[0].check.data_as_at)})</small>}
       </li>)}
     </ul>
-    <p>{BASEMAP_CREDIT}.{used.some(layer => layer.check.is_test_data) ? ' Licence and attribution statements for each dataset to be confirmed against the Data Register before this report goes to a client.' : ''}</p>
+    {caveats.length > 0 && <>
+      <h3>Reading the results</h3>
+      <ul>{caveats.map(entry => <li key={entry.layer}><b>{entry.title}</b>: {entry.caveats}</li>)}</ul>
+    </>}
+    {attributions.length > 0 && <>
+      <h3>Attribution</h3>
+      {attributions.map(text => <p key={text}>{text}</p>)}
+    </>}
+    <p>{BASEMAP_CREDIT}.{missing || used.some(layer => layer.check.is_test_data) ? ' Licence and attribution statements for some datasets still to be confirmed before this report goes to a client.' : ''}</p>
   </section>;
 }
 

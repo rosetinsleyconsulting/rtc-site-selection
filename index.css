@@ -720,7 +720,8 @@ body { -webkit-font-smoothing: antialiased; }
 .gis-shell { --pill-bg: rgba(254,255,248,.74); --pill-bg-hover: rgba(254,255,248,.92); --pill-ink: var(--ink); --pill-rule: rgba(45,45,42,.14); --pill-active: rgba(111,132,67,.22); }
 .gis-shell[data-theme="dark"] { --pill-bg: rgba(24,27,21,.62); --pill-bg-hover: rgba(24,27,21,.82); --pill-ink: #ECEEE3; --pill-rule: rgba(236,238,227,.16); --pill-active: rgba(111,132,67,.45); }
 .map-pills, .map-account { position: absolute; z-index: 5; top: 12px; display: flex; align-items: center; gap: 6px; pointer-events: none; }
-.map-pills { left: 0; right: 0; justify-content: center; padding: 0 140px; transition: right .38s var(--ease); }
+/* --account-w is the measured width of the account pill group (set from main.jsx), so the status pills centre in the free space to its left and never run under it */
+.map-pills { left: 0; right: 0; justify-content: center; padding: 0 calc(var(--account-w, 128px) + 24px) 0 12px; transition: right .38s var(--ease); }
 .map-account { right: 12px; }
 .map-area.inspector-open .map-pills { right: 420px; }
 .map-area.inspector-open .map-account { right: 432px; }
@@ -752,10 +753,10 @@ select.map-pill option { background: var(--paper); color: var(--ink); }
   .map-area.inspector-open .map-account { right: 372px; }
 }
 @media (max-width: 860px) {
-  .map-pills { justify-content: flex-start; padding: 0 130px 0 12px; overflow-x: auto; scrollbar-width: none; }
+  .map-pills { justify-content: flex-start; padding: 0 calc(var(--account-w, 128px) + 18px) 0 12px; overflow-x: auto; scrollbar-width: none; }
 }
 @media (max-width: 700px) {
-  .map-pills { top: 10px; padding: 0 118px 2px 10px; }
+  .map-pills { top: 10px; padding: 0 calc(var(--account-w, 108px) + 14px) 2px 10px; }
   .map-pill { height: 30px; padding: 0 11px; font-size: 11.5px; }
   .map-account { top: 10px; right: 10px; gap: 5px; }
   .map-pill.is-link span, .map-pill.is-link { padding: 0 10px; }
@@ -765,7 +766,7 @@ select.map-pill option { background: var(--paper); color: var(--ink); }
 /* When the map gets narrow (panels open on both sides), status pills drop to dot and number; the title keeps the meaning */
 .map-area { container-type: inline-size; container-name: map; }
 @container map (max-width: 820px) {
-  .map-pills { justify-content: flex-start; padding: 0 150px 0 12px; }
+  .map-pills { justify-content: flex-start; padding: 0 calc(var(--account-w, 128px) + 18px) 0 12px; }
   .map-pill-label { display: none; }
   .map-pill { padding: 0 11px; }
 }
@@ -774,16 +775,17 @@ select.map-pill option { background: var(--paper); color: var(--ink); }
 }
 /* The site article overlays the map, so with it open the free width is about 420px less */
 @container map (max-width: 1240px) {
-  .map-area.inspector-open .map-pills { justify-content: flex-start; padding: 0 150px 0 12px; }
+  .map-area.inspector-open .map-pills { justify-content: flex-start; padding: 0 calc(var(--account-w, 128px) + 18px) 0 12px; }
   .map-area.inspector-open .map-pills .map-pill-label { display: none; }
   .map-area.inspector-open .map-pills .map-pill { padding: 0 11px; }
 }
 @container map (max-width: 980px) {
   .map-area.inspector-open .map-pill.is-workspace { display: none; }
 }
-/* Account pills keep their labels except on narrow maps, where Admin becomes an icon */
+/* Account pills keep their labels on wide maps. Below 1180px (with up to five pills: View as client, Admin,
+   About the data, theme, sign out) the links become icons so they don't run into the status pills. */
 .map-account .map-pill-label { display: inline; }
-@container map (max-width: 560px) {
+@container map (max-width: 1180px) {
   .map-account .map-pill-label { display: none; }
   .map-account .map-pill.is-link { width: 32px; padding: 0; justify-content: center; border-radius: 50%; }
 }

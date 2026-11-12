@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowRight,
+  BookOpen,
   Building2,
   Check,
   ClipboardList,
@@ -43,6 +44,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import Grainient from './Grainient.jsx';
 import Topography from './Topography.jsx';
 import ReportBuilderRoute from './ReportBuilder.jsx';
+import { DataSourcesRoute, MethodologyRoute, PoliciesRoute } from './InfoPages.jsx';
 import '../index.css';
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
@@ -477,6 +479,20 @@ const BASEMAP_KEY = 'rtc-site-selection-basemap';
 
 // Panel theme shared by the map workspace and Admin: dark by default, remembered per browser.
 // Storage can be blocked, so fall back quietly.
+// The account pills (View as client, Admin, About the data, theme, sign out) vary in number and in width as their
+// labels collapse. Publishing their width as --account-w on the map area lets the status pills keep clear of them.
+function useAccountWidth() {
+  const observer = useRef(null);
+  return useCallback(element => {
+    observer.current?.disconnect();
+    observer.current = null;
+    const area = element?.closest('.map-area');
+    if (!element || !area || typeof ResizeObserver === 'undefined') return;
+    observer.current = new ResizeObserver(() => area.style.setProperty('--account-w', `${Math.ceil(element.getBoundingClientRect().width)}px`));
+    observer.current.observe(element);
+  }, []);
+}
+
 export function usePanelTheme() {
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'; } catch { return 'dark'; }
@@ -527,6 +543,7 @@ export function PanelBackground({ theme }) {
 }
 
 function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange }) {
+  const accountRef = useAccountWidth();
   const [sites, setSites] = useState([]);
   const [statusFilter, setStatusFilter] = useState('all');
   const [query, setQuery] = useState('');
@@ -823,9 +840,10 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
             <i className="is-ring" style={{ borderColor: APPRAISAL_RING }} aria-hidden="true"/><b>{counts.appraisals}</b><span className="map-pill-label">{counts.appraisals === 1 ? 'appraisal' : 'appraisals'}</span>
           </button>}
         </div>
-        <div className="map-account" role="group" aria-label="Account">
+        <div className="map-account" role="group" aria-label="Account" ref={accountRef}>
           {asAdmin && <button type="button" className="map-pill is-link" onClick={() => setClientPreview(true)} title={`See this workspace as ${workspace.name}'s members do`}><Eye size={14}/><span className="map-pill-label">View as client</span></button>}
           {asAdmin && <Link to="/admin" className="map-pill is-link" title="Admin overview"><ShieldCheck size={14}/><span className="map-pill-label">Admin</span></Link>}
+          <Link to={`/data?workspace=${workspace.id}`} className="map-pill is-link" title="Data sources, methodology and policies" aria-label="About the data"><BookOpen size={14}/><span className="map-pill-label">About the data</span></Link>
           <ThemeToggle theme={theme} setTheme={setTheme} className="map-pill is-icon"/>
           <SignOutButton/>
         </div>
@@ -1583,6 +1601,7 @@ function AdminOverview() {
             <Icon size={16}/><span>{label}</span>{count !== undefined && <b className={highlight ? 'is-highlight' : ''}>{count}</b>}
           </button>)}
         </nav>
+        <Link className="info-back" to="/data"><BookOpen size={14}/>Data sources and policies</Link>
       </div>
     </aside>
     <main className="main adm-main">
@@ -1884,7 +1903,7 @@ function AdminSheet({ title, description, onClose, footer, children }) {
 
 function App() {
   if (!supabase) return <ConfigurationNotice />;
-  return <AuthProvider><BrowserRouter><Routes><Route path="/sign-in" element={<SignInRoute/>}/><Route path="/sign-up" element={<SignUpRedirect/>}/><Route path="/forgot-password" element={<ForgotPasswordRoute/>}/><Route path="/set-password" element={<SetPasswordRoute/>}/><Route path="/admin/appraisal-requests/:requestId/report" element={<ProtectedRoute><ReportBuilderRoute/></ProtectedRoute>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="/workspace/:workspaceId" element={<ProtectedRoute><WorkspaceRoute/></ProtectedRoute>}/><Route path="*" element={<HomeRoute/>}/></Routes></BrowserRouter></AuthProvider>;
+  return <AuthProvider><BrowserRouter><Routes><Route path="/sign-in" element={<SignInRoute/>}/><Route path="/sign-up" element={<SignUpRedirect/>}/><Route path="/forgot-password" element={<ForgotPasswordRoute/>}/><Route path="/set-password" element={<SetPasswordRoute/>}/><Route path="/admin/appraisal-requests/:requestId/report" element={<ProtectedRoute><ReportBuilderRoute/></ProtectedRoute>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="/data" element={<ProtectedRoute><DataSourcesRoute/></ProtectedRoute>}/><Route path="/methodology" element={<ProtectedRoute><MethodologyRoute/></ProtectedRoute>}/><Route path="/policies" element={<ProtectedRoute><PoliciesRoute/></ProtectedRoute>}/><Route path="/workspace/:workspaceId" element={<ProtectedRoute><WorkspaceRoute/></ProtectedRoute>}/><Route path="*" element={<HomeRoute/>}/></Routes></BrowserRouter></AuthProvider>;
 }
 
 createRoot(document.getElementById('root')).render(<App />);

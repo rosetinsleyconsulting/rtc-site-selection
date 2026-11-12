@@ -730,6 +730,33 @@ router.patch('/admin/users/:userId', requirePlatformAdmin, async (req, res) => {
   res.json(result[0]);
 });
 
+// Data sources page (/data) and the report's sources section: licence, attribution, caveats and freshness for
+// each dataset. Clients see only the layers assigned to workspaces they belong to; admins see everything loaded.
+router.get('/data-sources', async (req, res) => {
+  privateResponse(res);
+  if (!spatialConfigured) return res.status(503).json({ error: 'Data catalogue is not configured (SPATIAL_DATABASE_URL)' });
+  let sources = null;
+  if (!req.localUser.isPlatformAdmin) {
+    const assigned = await req.app.locals.db.execute(sql`
+      SELECT l.source_id FROM workspace_constraint_layers l
+      INNER JOIN memberships m ON m.workspace_id = l.workspace_id AND m.user_id = ${req.localUser.id}
+      UNION
+      SELECT l.source_id FROM workspace_layers l
+      INNER JOIN memberships m ON m.workspace_id = l.workspace_id AND m.user_id = ${req.localUser.id}
+    `);
+    sources = assigned.rows.map(row => row.source_id);
+    if (!sources.length) return res.json({ layers: [], changelog: [], last_checked: null });
+  }
+  try {
+    const result = await spatialPool.query('SELECT meta.data_catalogue($1::text[]) AS catalogue', [sources]);
+    res.json(result.rows[0].catalogue);
+  } catch (error) {
+    console.error('Data catalogue failed:', error.message);
+    res.locals.errorMessage = `Data catalogue failed: ${error.message}`;
+    res.status(502).json({ error: 'Unable to load the data sources' });
+  }
+});
+
 async function userEmail(req, userId) {
   const result = await req.app.locals.db.execute(sql`SELECT email FROM users WHERE id = ${userId}`);
   return result.rows[0]?.email || `user ${userId}`;

@@ -185,7 +185,8 @@
 .rb-sources h2 { margin: 0 0 6px; color: var(--charcoal); font: 700 10px/1.2 var(--font-ui); letter-spacing: .12em; text-transform: uppercase; }
 .rb-sources ul { margin: 0 0 6px; padding: 0; list-style: none; display: grid; gap: 2px; }
 .rb-sources b { color: var(--charcoal); font-weight: 600; }
-.rb-sources p { margin: 0; }
+.rb-sources p { margin: 0 0 4px; }
+.rb-sources h3 { margin: 10px 0 4px; color: var(--charcoal); font: 700 9.5px/1.2 var(--font-ui); letter-spacing: .12em; text-transform: uppercase; }
 
 @media (max-width: 640px) {
   .rb-online { padding: 22px 18px; }
@@ -212,7 +213,8 @@
   .rb-preview { overflow: visible !important; background: #fff !important; padding: 0 !important; border-radius: 0 !important; }
   .rb-online { width: 100% !important; max-width: 180mm !important; margin: 0 !important; box-shadow: none !important; padding: 0 !important; border-radius: 0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .rb-report-narrative.is-empty { display: none; }
-  .rb-map-block, .rb-check-table tr, .rb-figures, .rb-basis, .rb-sources { break-inside: avoid; }
+  .rb-map-block, .rb-check-table tr, .rb-figures, .rb-basis, .rb-sources li, .rb-sources p { break-inside: avoid; }
+  .rb-sources h2, .rb-sources h3 { break-after: avoid; }
   .rb-report-section h2, .rb-check-summary, .rb-check-table thead, .rb-check-table tr.rb-group, .rb-clear-head { break-after: avoid; }
   .rb-map-canvas .maplibregl-ctrl-bottom-right { display: none; }
   .rb-map-attribution { display: block; }

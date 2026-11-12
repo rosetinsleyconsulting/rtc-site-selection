@@ -992,6 +992,9 @@ select.map-pill option { background: var(--paper); color: var(--ink); }
 .adm-main > .adm-account { width: auto; max-width: none; }
 @media (max-width: 700px) { .adm-account { top: 24px; right: 64px; } }
 .auth-card .auth-note { margin: 2px 0 0; color: rgba(254,255,248,.62); font: 500 12px/1.5 var(--font-ui); }
+.auth-card .auth-intro { margin-top: -6px; font-size: 15px; }
+/* "Send a new link" on the expired-link card is a link styled as the primary button */
+.auth-card a.auth-primary { display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; text-decoration: none; font: 700 13px var(--font-ui); }
 
 /* Sign-in toned to match the website hero (4 Nov 2026): charcoal ground, the hero's SVG grain at the same
    strength, and a soft charcoal fade at the bottom. The Topography props keep the moss lines low-glow. */

@@ -557,7 +557,7 @@ router.patch('/admin/appraisal-requests/:requestId', requirePlatformAdmin, async
 
 router.get('/admin/users', requirePlatformAdmin, async (req, res) => {
   privateResponse(res);
-  const [userResult, membershipResult] = await Promise.all([
+  const [userResult, membershipResult, inviteResult] = await Promise.all([
     req.app.locals.db.execute(sql`
       SELECT id, email, name, is_platform_admin, created_at
       FROM users ORDER BY lower(name), lower(email)
@@ -566,6 +566,12 @@ router.get('/admin/users', requirePlatformAdmin, async (req, res) => {
       SELECT m.user_id, w.id AS workspace_id, w.name, w.slug
       FROM memberships m INNER JOIN workspaces w ON w.id = m.workspace_id
       ORDER BY w.name
+    `),
+    // Invited people who haven't signed in yet (the row is removed on their first sign-in)
+    req.app.locals.db.execute(sql`
+      SELECT p.email, p.workspace_id, w.name AS workspace_name, p.created_at
+      FROM pending_invites p LEFT JOIN workspaces w ON w.id = p.workspace_id
+      ORDER BY p.created_at DESC
     `),
   ]);
   const membershipMap = new Map();
@@ -579,10 +585,37 @@ router.get('/admin/users', requirePlatformAdmin, async (req, res) => {
       ...user,
       memberships: membershipMap.get(user.id) || [],
     })),
+    pendingInvites: inviteResult.rows,
   });
 });
 
-router.post('/admin/users/invite', requirePlatformAdmin, async (req, res) => {
+// Email links must point at the fixed public address, never one built from the request's Host header
+const appUrl = req => (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+const setPasswordUrl = req => `${appUrl(req)}/set-password`;
+
+// Every email the app asks Supabase to send costs Resend quota and lands in someone's inbox: cap them per admin
+const authEmailLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  keyGenerator: req => `auth-email-${req.localUser.id}`,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many emails sent in a short time. Try again in a few minutes.' },
+  validate: { trustProxy: false, xForwardedForHeader: false },
+});
+
+// Supabase refuses a second invite to an address it already knows (invited but never finished, or a
+// past user). A recovery email gives them a fresh set-password link instead, and confirms the address.
+async function sendInviteOrFreshLink(email, req) {
+  const { error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, { redirectTo: setPasswordUrl(req) });
+  if (!error) return 'invited';
+  if (!/already (been )?registered|already exists/i.test(error.message || '')) throw error;
+  const { error: resetError } = await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo: setPasswordUrl(req) });
+  if (resetError) throw resetError;
+  return 'link-resent';
+}
+
+router.post('/admin/users/invite', requirePlatformAdmin, authEmailLimit, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Provide a valid email address' });
   if (!supabaseConfigured) return res.status(503).json({ error: 'Supabase is not configured' });
@@ -600,16 +633,35 @@ router.post('/admin/users/invite', requirePlatformAdmin, async (req, res) => {
       target: pendingInvites.email,
       set: { workspaceId },
     });
-    const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-      // A fixed public address, so invite links can't be steered by a request's Host header
-      redirectTo: `${(process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '')}/sign-up`,
-    });
-    if (error) throw error;
-    res.status(201).json({ invitationId: data.user.id, email, workspaceId });
+    const outcome = await sendInviteOrFreshLink(email, req);
+    res.status(201).json({ email, workspaceId, outcome });
   } catch (error) {
     console.error('Invitation failed:', error);
     res.status(502).json({ error: 'Unable to send invitation' });
   }
+});
+
+router.delete('/admin/pending-invites/:email', requirePlatformAdmin, async (req, res) => {
+  const email = String(req.params.email || '').trim().toLowerCase();
+  await req.app.locals.db.delete(pendingInvites).where(sql`${pendingInvites.email} = ${email}`);
+  res.status(204).end();
+});
+
+// Sends the person a link to choose a new password. Works for anyone with an account, including
+// invited people who never finished setting up.
+router.post('/admin/users/:userId/password-reset', requirePlatformAdmin, authEmailLimit, async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId)) return res.status(400).json({ error: 'Invalid user id' });
+  if (!supabaseConfigured) return res.status(503).json({ error: 'Supabase is not configured' });
+  const result = await req.app.locals.db.execute(sql`SELECT email FROM users WHERE id = ${userId}`);
+  const email = result.rows[0]?.email;
+  if (!email) return res.status(404).json({ error: 'User not found' });
+  const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo: setPasswordUrl(req) });
+  if (error) {
+    console.error('Password reset email failed:', error);
+    return res.status(502).json({ error: 'Unable to send the reset email' });
+  }
+  res.status(202).json({ email });
 });
 
 router.post('/admin/users/:userId/memberships', requirePlatformAdmin, async (req, res) => {

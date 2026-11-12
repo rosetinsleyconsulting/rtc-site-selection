@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowRight,
@@ -14,6 +14,7 @@ import {
   Eye,
   FileText,
   GripVertical,
+  KeyRound,
   Layers3,
   List,
   LoaderCircle,
@@ -24,6 +25,7 @@ import {
   RotateCcw,
   House,
   Search,
+  Send,
   Settings2,
   Shapes,
   ShieldCheck,
@@ -46,6 +48,25 @@ maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Invite and password-reset emails land with tokens (or an error) in the URL hash. Read it before
+// supabase-js consumes and clears it, so the set-password page knows how the visitor arrived.
+// The flag survives a reload of the set-password page but not the end of the browser tab.
+const SET_PASSWORD_FLAG = 'rtc-set-password';
+const AUTH_LINK = (() => {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const query = new URLSearchParams(window.location.search);
+  const read = key => hash.get(key) || query.get(key);
+  const type = read('type');
+  if (['invite', 'recovery', 'signup', 'magiclink'].includes(type)) {
+    try { sessionStorage.setItem(SET_PASSWORD_FLAG, type); } catch { /* storage blocked: the hash still works this load */ }
+  }
+  return { type, error: read('error_description'), errorCode: read('error_code') };
+})();
+const setPasswordReason = () => {
+  try { return sessionStorage.getItem(SET_PASSWORD_FLAG) || AUTH_LINK.type; } catch { return AUTH_LINK.type; }
+};
+const clearSetPasswordReason = () => { try { sessionStorage.removeItem(SET_PASSWORD_FLAG); } catch { /* nothing to clear */ } };
+const MIN_PASSWORD = 10;
 const supabase = (supabaseUrl && supabaseAnonKey) ? createClient(supabaseUrl, supabaseAnonKey) : null;
 let currentSession = null;
 if (supabase) {
@@ -179,14 +200,29 @@ function AuthShell({ children }) {
   </div>;
 }
 
-function AuthForm({ title, error, busy, onSubmit, children, footer }) {
+function AuthForm({ title, intro, error, busy, onSubmit, children, footer, submitLabel = 'Continue' }) {
   return <AuthShell><form className="auth-card" onSubmit={onSubmit}>
     <h1 className="auth-title">{title}</h1>
+    {intro && <p className="auth-intro">{intro}</p>}
     {error && <p className="auth-error" role="alert">{error}</p>}
     {children}
-    <button className="auth-primary decision accept" disabled={busy}>{busy && <LoaderCircle className="spin" size={14}/>}Continue</button>
+    <button className="auth-primary decision accept" disabled={busy}>{busy && <LoaderCircle className="spin" size={14}/>}{submitLabel}</button>
     {footer}
   </form></AuthShell>;
+}
+
+function AuthMessage({ title, children }) {
+  return <AuthShell><div className="auth-card" role="status">
+    <h1 className="auth-title">{title}</h1>
+    {children}
+  </div></AuthShell>;
+}
+
+// Supabase's raw messages are terse and sometimes leak whether an account exists; say it plainly instead
+function signInErrorMessage(error) {
+  if (error.status === 429) return 'Too many attempts. Wait a few minutes and try again.';
+  if (/email not confirmed/i.test(error.message)) return 'This account hasn’t been set up yet. Use the link in your invite email, or reset your password below.';
+  return 'That email and password don’t match. Check them, or reset your password below.';
 }
 
 function SignInRoute() {
@@ -202,7 +238,7 @@ function SignInRoute() {
     setError('');
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
     setBusy(false);
-    if (signInError) return setError(signInError.message);
+    if (signInError) return setError(signInErrorMessage(signInError));
     navigate('/');
   };
 
@@ -211,68 +247,114 @@ function SignInRoute() {
     error={error}
     busy={busy}
     onSubmit={submit}
-    footer={<p className="auth-note">Access is by invitation. Your invite email has a link to set up your account.</p>}
+    submitLabel="Sign in"
+    footer={<>
+      <Link className="auth-link" to="/forgot-password" state={{ email }}>Forgot your password?</Link>
+      <p className="auth-note">Access is by invitation. Your invite email has a link to set up your account.</p>
+    </>}
   >
-    <label>Email<input type="email" required value={email} onChange={event => setEmail(event.target.value)} /></label>
-    <label>Password<input type="password" required value={password} onChange={event => setPassword(event.target.value)} /></label>
+    <label>Email<input type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} /></label>
+    <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} /></label>
   </AuthForm>;
 }
 
-function SignUpRoute() {
-  const { session, loading } = useSession();
-  const navigate = useNavigate();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+function ForgotPasswordRoute() {
+  const location = useLocation();
+  const [email, setEmail] = useState(location.state?.email || '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [confirmSent, setConfirmSent] = useState(false);
-
-  if (loading) return <LoadingScreen label="Loading" />;
-
-  if (session) {
-    const finishInvite = async event => {
-      event.preventDefault();
-      setBusy(true);
-      setError('');
-      const { error: updateError } = await supabase.auth.updateUser({ password });
-      setBusy(false);
-      if (updateError) return setError(updateError.message);
-      navigate('/');
-    };
-    return <AuthForm title="Set your password" error={error} busy={busy} onSubmit={finishInvite}>
-      <label>New password<input type="password" required minLength={8} value={password} onChange={event => setPassword(event.target.value)} /></label>
-    </AuthForm>;
-  }
-
-  if (confirmSent) {
-    return <AuthShell><div className="auth-card">
-      <h1 className="auth-title">Check your email</h1>
-      <p>We've sent a confirmation link to <strong>{email}</strong>. Click it to activate your account, then sign in.</p>
-      <Link className="auth-link" to="/sign-in">Back to sign in</Link>
-    </div></AuthShell>;
-  }
+  const [sent, setSent] = useState(false);
 
   const submit = async event => {
     event.preventDefault();
     setBusy(true);
     setError('');
-    const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}/set-password` });
     setBusy(false);
-    if (signUpError) return setError(signUpError.message);
-    if (!data.session) return setConfirmSent(true);
-    navigate('/');
+    // Same answer whether or not the address has an account, so this page can't be used to find accounts
+    if (resetError?.status === 429) return setError('Too many requests. Wait a few minutes and try again.');
+    setSent(true);
   };
 
+  if (sent) return <AuthMessage title="Check your email">
+    <p>If <strong>{email}</strong> has an account, we've sent it a link to choose a new password. The link works once and expires after an hour.</p>
+    <p className="auth-note">Nothing arrived after a few minutes? Check your junk folder, or email hello@rosetinsleyconsulting.com.</p>
+    <Link className="auth-link" to="/sign-in">Back to sign in</Link>
+  </AuthMessage>;
+
   return <AuthForm
-    title="Create an account"
+    title="Reset your password"
+    intro="Enter the email you sign in with and we'll send you a link to choose a new password."
     error={error}
     busy={busy}
     onSubmit={submit}
-    footer={<Link className="auth-link" to="/sign-in">Already have an account? Sign in</Link>}
+    submitLabel="Send reset link"
+    footer={<Link className="auth-link" to="/sign-in">Back to sign in</Link>}
   >
-    <label>Email<input type="email" required value={email} onChange={event => setEmail(event.target.value)} /></label>
-    <label>Password<input type="password" required minLength={8} value={password} onChange={event => setPassword(event.target.value)} /></label>
+    <label>Email<input type="email" autoComplete="email" required autoFocus value={email} onChange={event => setEmail(event.target.value)} /></label>
   </AuthForm>;
+}
+
+// Landing page for both invite and reset links. Only shown to a session that arrived from one of those links.
+function SetPasswordRoute() {
+  const { session, loading } = useSession();
+  const navigate = useNavigate();
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const reason = setPasswordReason();
+
+  if (loading) return <LoadingScreen label="Checking your link" />;
+
+  if (!session) {
+    const expired = AUTH_LINK.errorCode === 'otp_expired' || /expired|invalid/i.test(AUTH_LINK.error || '') || !AUTH_LINK.error;
+    return <AuthMessage title={expired ? 'This link has expired' : 'This link didn’t work'}>
+      <p>Links in our emails work once and expire after a short time. You can send yourself a new one: it works for new invites too.</p>
+      <Link className="auth-primary decision accept" to="/forgot-password">Send a new link</Link>
+      <Link className="auth-link" to="/sign-in">Back to sign in</Link>
+    </AuthMessage>;
+  }
+  // A signed-in visitor who didn't come from an email link has no business here
+  if (!reason) return <Navigate to="/" replace />;
+
+  const invited = reason === 'invite' || reason === 'signup';
+  const submit = async event => {
+    event.preventDefault();
+    setError('');
+    if (password.length < MIN_PASSWORD) return setError(`Use at least ${MIN_PASSWORD} characters.`);
+    if (password !== confirm) return setError('The two passwords don’t match.');
+    setBusy(true);
+    const { error: updateError } = await supabase.auth.updateUser({ password });
+    if (updateError) {
+      setBusy(false);
+      if (/different from the old/i.test(updateError.message)) return setError('Choose a password you haven’t used here before.');
+      if (/weak|pwned|leaked/i.test(updateError.message)) return setError('That password appears in known data breaches. Choose a different one.');
+      return setError(updateError.message);
+    }
+    // A reset means the old password may be known to someone else: end any other signed-in sessions
+    if (!invited) await supabase.auth.signOut({ scope: 'others' }).catch(() => {});
+    clearSetPasswordReason();
+    navigate('/', { replace: true });
+  };
+
+  return <AuthForm
+    title={invited ? 'Set your password' : 'Choose a new password'}
+    intro={invited ? `Welcome. Choose a password to finish setting up ${session.user?.email || 'your account'}.` : `For ${session.user?.email || 'your account'}. Other devices signed in to this account will be signed out.`}
+    error={error}
+    busy={busy}
+    onSubmit={submit}
+    submitLabel={invited ? 'Set password' : 'Save new password'}
+  >
+    <label>New password<input type="password" autoComplete="new-password" required minLength={MIN_PASSWORD} autoFocus value={password} onChange={event => setPassword(event.target.value)} /></label>
+    <label>Confirm password<input type="password" autoComplete="new-password" required minLength={MIN_PASSWORD} value={confirm} onChange={event => setConfirm(event.target.value)} /></label>
+    <p className="auth-note">At least {MIN_PASSWORD} characters. A short phrase is easier to remember than a jumble.</p>
+  </AuthForm>;
+}
+
+// Old invite emails pointed at /sign-up. Public sign-up is closed, so send link holders on and everyone else to sign in.
+function SignUpRedirect() {
+  return <Navigate to={setPasswordReason() || AUTH_LINK.error ? '/set-password' : '/sign-in'} replace />;
 }
 
 function ProtectedRoute({ children }) {
@@ -284,6 +366,9 @@ function ProtectedRoute({ children }) {
 function HomeRoute() {
   const { session, loading } = useSession();
   if (loading) return <LoadingScreen label="Checking your session" />;
+  // If Supabase fell back to the site root (redirect not allow-listed), still finish the invite or reset
+  if (session && setPasswordReason()) return <Navigate to="/set-password" replace />;
+  if (!session && AUTH_LINK.error) return <Navigate to="/set-password" replace />;
   // Signed-out visitors (e.g. from the website's Client Login button) go straight to sign-in
   return session ? <Home /> : <Navigate to="/sign-in" replace />;
 }
@@ -1306,6 +1391,7 @@ const countCsvRows = text => Math.max(0, String(text || '').split(/\r?\n/).filte
 function AdminOverview() {
   const [workspaces, setWorkspaces] = useState([]);
   const [users, setUsers] = useState([]);
+  const [pendingInvites, setPendingInvites] = useState([]);
   const [requests, setRequests] = useState([]);
   const [section, setSection] = useState('clients');
   const [query, setQuery] = useState('');
@@ -1329,6 +1415,7 @@ function AdminOverview() {
       const [workspaceResponse, userResponse, requestResponse] = await Promise.all([api('/api/admin/workspaces'), api('/api/admin/users'), api('/api/admin/appraisal-requests')]);
       setWorkspaces(workspaceResponse.workspaces || []);
       setUsers(userResponse.users || []);
+      setPendingInvites(userResponse.pendingInvites || []);
       setRequests(requestResponse.requests || []);
     } catch (loadError) {
       setError(loadError.status === 403 ? 'Your account does not have platform-admin access.' : loadError.message);
@@ -1396,13 +1483,42 @@ function AdminOverview() {
     setError('');
     try {
       const workspaceId = inviteWorkspaceId ? Number(inviteWorkspaceId) : null;
-      await api('/api/admin/users/invite', { method: 'POST', body: JSON.stringify({ email: inviteEmail, workspaceId }) });
+      const result = await api('/api/admin/users/invite', { method: 'POST', body: JSON.stringify({ email: inviteEmail, workspaceId }) });
       const grantedWorkspace = workspaces.find(item => item.id === workspaceId);
-      setNotice(grantedWorkspace ? `Invite sent to ${inviteEmail}. They'll see ${grantedWorkspace.name} once they sign up.` : `Invite sent to ${inviteEmail}.`);
+      const sent = result.outcome === 'link-resent' ? `${inviteEmail} already had an account, so we sent a fresh link to set their password.` : `Invite sent to ${inviteEmail}.`;
+      setNotice(grantedWorkspace ? `${sent} They'll see ${grantedWorkspace.name} once they sign in.` : sent);
       setInviteEmail('');
       setInviteWorkspaceId('');
       closeSheet();
+      await loadAdminData({ quiet: true });
     } catch (inviteError) { setError(inviteError.message); } finally { setBusy(''); }
+  };
+  const resendInvite = async pending => {
+    setBusy(`invite-${pending.email}`);
+    setError('');
+    try {
+      await api('/api/admin/users/invite', { method: 'POST', body: JSON.stringify({ email: pending.email, workspaceId: pending.workspace_id }) });
+      setNotice(`New link sent to ${pending.email}.`);
+      await loadAdminData({ quiet: true });
+    } catch (inviteError) { setError(inviteError.message); } finally { setBusy(''); }
+  };
+  const cancelInvite = async pending => {
+    if (!window.confirm(`Cancel the invite for ${pending.email}? If they use the link anyway they'll sign in to an empty account with no workspace.`)) return;
+    setBusy(`invite-${pending.email}`);
+    setError('');
+    try {
+      await api(`/api/admin/pending-invites/${encodeURIComponent(pending.email)}`, { method: 'DELETE' });
+      setNotice(`Invite for ${pending.email} cancelled.`);
+      await loadAdminData({ quiet: true });
+    } catch (inviteError) { setError(inviteError.message); } finally { setBusy(''); }
+  };
+  const sendPasswordReset = async user => {
+    setBusy(`reset-${user.id}`);
+    setError('');
+    try {
+      await api(`/api/admin/users/${user.id}/password-reset`, { method: 'POST' });
+      setNotice(`Password reset link sent to ${user.email}.`);
+    } catch (resetError) { setError(resetError.message); } finally { setBusy(''); }
   };
   const readFile = event => {
     const file = event.target.files?.[0];
@@ -1417,6 +1533,7 @@ function AdminOverview() {
   const needle = normalize(query.trim());
   const visibleWorkspaces = useMemo(() => workspaces.filter(item => !needle || normalize(`${item.name} ${item.slug}`).includes(needle)), [workspaces, needle]);
   const visibleUsers = useMemo(() => users.filter(item => !needle || normalize(`${item.name} ${item.email} ${item.memberships.map(m => m.name).join(' ')}`).includes(needle)), [users, needle]);
+  const visiblePending = useMemo(() => pendingInvites.filter(item => !needle || normalize(`${item.email} ${item.workspace_name || ''}`).includes(needle)), [pendingInvites, needle]);
   const visibleRequests = useMemo(() => requests.filter(item => !needle || normalize(`${item.site_name} ${item.workspace_name} ${item.requested_by_email} ${item.borough}`).includes(needle)), [requests, needle]);
   const openRequests = requests.filter(item => isOpenAppraisal(item.status)).length;
   const totalSites = workspaces.reduce((sum, item) => sum + (item.site_count || 0), 0);
@@ -1433,7 +1550,7 @@ function AdminOverview() {
 
   const navItems = [
     { key: 'clients', label: 'Client workspaces', icon: Building2, count: workspaces.length },
-    { key: 'people', label: 'People & access', icon: Users, count: users.length },
+    { key: 'people', label: 'People & access', icon: Users, count: pendingInvites.length ? `${users.length} + ${pendingInvites.length} invited` : users.length },
     { key: 'appraisals', label: 'Site appraisals', icon: ClipboardList, count: openRequests ? `${openRequests} open` : requests.length, highlight: openRequests > 0 },
   ];
 
@@ -1530,7 +1647,17 @@ function AdminOverview() {
             <td className="col-created">{formatAdminDate(user.created_at)}</td>
             <td className="adm-actions"><button className="adm-btn adm-btn-ghost" onClick={() => openSheet({ userId: user.id })}>Manage</button></td>
           </tr>)}
-          {!visibleUsers.length && <tr className="adm-empty-row"><td colSpan={5}>
+          {visiblePending.map(pending => <tr key={`invite-${pending.email}`} className="is-pending">
+            <td><span className="adm-primary-cell"><strong>{pending.email}</strong><span>Invited, not signed in yet</span></span></td>
+            <td><span className="adm-badge">Invited</span></td>
+            <td className="col-access">{pending.workspace_name ? <span className="adm-access"><span className="adm-tag">{pending.workspace_name}</span></span> : <span className="adm-muted">None yet</span>}</td>
+            <td className="col-created">{formatAdminDate(pending.created_at)}</td>
+            <td className="adm-actions">
+              <button className="adm-btn adm-btn-ghost" disabled={busy === `invite-${pending.email}`} onClick={() => resendInvite(pending)}>{busy === `invite-${pending.email}` ? <LoaderCircle className="spin" size={13}/> : <Send size={13}/>}Resend</button>
+              <button className="adm-btn adm-btn-ghost" disabled={busy === `invite-${pending.email}`} onClick={() => cancelInvite(pending)}>Cancel</button>
+            </td>
+          </tr>)}
+          {!visibleUsers.length && !visiblePending.length && <tr className="adm-empty-row"><td colSpan={5}>
             {users.length ? <>No people match “{query}”.</> : <>People appear here after they first sign in. <button className="adm-link-button" onClick={() => openSheet('invite')}>Invite someone</button></>}
           </td></tr>}
         </tbody>
@@ -1580,6 +1707,13 @@ function AdminOverview() {
           <AdminSwitch checked={accessUser.is_platform_admin} busy={busy === `user-${accessUser.id}`}
             label="Platform admin" hint="Sees every workspace and can manage people."
             onChange={value => updateUser(accessUser.id, { isPlatformAdmin: value }, `${accessUser.email} ${value ? 'is now a platform admin' : 'is no longer a platform admin'}.`)}/>
+        </section>
+        <section className="adm-group">
+          <h3>Password</h3>
+          <p className="adm-muted">Emails {accessUser.email} a link to choose a new password. Their current password keeps working until they do.</p>
+          <button type="button" className="adm-btn adm-btn-ghost" disabled={busy === `reset-${accessUser.id}`} onClick={() => sendPasswordReset(accessUser)}>
+            {busy === `reset-${accessUser.id}` ? <LoaderCircle className="spin" size={13}/> : <KeyRound size={13}/>}Send password reset link
+          </button>
         </section>
         <section className="adm-group">
           <h3>Workspace access</h3>
@@ -1641,7 +1775,7 @@ function AdminSheet({ title, description, onClose, footer, children }) {
 
 function App() {
   if (!supabase) return <ConfigurationNotice />;
-  return <AuthProvider><BrowserRouter><Routes><Route path="/sign-in" element={<SignInRoute/>}/><Route path="/sign-up" element={<SignUpRoute/>}/><Route path="/admin/appraisal-requests/:requestId/report" element={<ProtectedRoute><ReportBuilderRoute/></ProtectedRoute>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="/workspace/:workspaceId" element={<ProtectedRoute><WorkspaceRoute/></ProtectedRoute>}/><Route path="*" element={<HomeRoute/>}/></Routes></BrowserRouter></AuthProvider>;
+  return <AuthProvider><BrowserRouter><Routes><Route path="/sign-in" element={<SignInRoute/>}/><Route path="/sign-up" element={<SignUpRedirect/>}/><Route path="/forgot-password" element={<ForgotPasswordRoute/>}/><Route path="/set-password" element={<SetPasswordRoute/>}/><Route path="/admin/appraisal-requests/:requestId/report" element={<ProtectedRoute><ReportBuilderRoute/></ProtectedRoute>}/><Route path="/admin/*" element={<AdminRoute/>}/><Route path="/workspace/:workspaceId" element={<ProtectedRoute><WorkspaceRoute/></ProtectedRoute>}/><Route path="*" element={<HomeRoute/>}/></Routes></BrowserRouter></AuthProvider>;
 }
 
 createRoot(document.getElementById('root')).render(<App />);

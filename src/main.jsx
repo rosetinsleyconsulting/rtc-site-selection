@@ -484,20 +484,20 @@ export function ThemeToggle({ theme, setTheme, className }) {
   </button>;
 }
 
-// Raster basemaps from OpenStreetMap and OpenTopoMap (free with attribution). Greys are made in the renderer:
-// saturation -1 removes colour, and brightness-min above brightness-max inverts the tiles for the dark map.
-const BASEMAPS = {
-  light: { label: 'Light grey', source: 'osm', paint: { 'raster-saturation': -1, 'raster-contrast': -0.15, 'raster-brightness-min': 0.12, 'raster-brightness-max': 1, 'raster-opacity': 1 } },
-  dark: { label: 'Dark grey', source: 'osm', paint: { 'raster-saturation': -1, 'raster-contrast': -0.1, 'raster-brightness-min': 0.86, 'raster-brightness-max': 0.24, 'raster-opacity': 1 } },
-  streets: { label: 'Streets', source: 'osm', paint: { 'raster-saturation': 0, 'raster-contrast': 0, 'raster-brightness-min': 0, 'raster-brightness-max': 1, 'raster-opacity': 1 } },
-  topo: { label: 'Topographic', source: 'topo', paint: { 'raster-saturation': -0.15, 'raster-contrast': 0, 'raster-brightness-min': 0, 'raster-brightness-max': 1, 'raster-opacity': 1 } },
+// Vector basemaps from OpenFreeMap (free, commercial use allowed, data © OpenStreetMap contributors).
+// Replaced the community OSM and OpenTopoMap raster servers on 12 Nov 2026: their usage policies don't
+// cover a commercial portal or maps printed into client reports. Their attribution is in each style.
+const OPENFREEMAP_STYLE = name => `https://tiles.openfreemap.org/styles/${name}`;
+export const BASEMAPS = {
+  light: { label: 'Light grey', style: OPENFREEMAP_STYLE('positron') },
+  dark: { label: 'Dark grey', style: OPENFREEMAP_STYLE('dark') },
+  streets: { label: 'Streets', style: OPENFREEMAP_STYLE('liberty') },
 };
 const BASEMAP_CHOICES = [
   { key: 'auto', label: 'Match theme', note: 'Light grey or dark grey' },
   { key: 'light', label: 'Light grey' },
   { key: 'dark', label: 'Dark grey' },
   { key: 'streets', label: 'Streets', note: 'Full colour' },
-  { key: 'topo', label: 'Topographic', note: 'Contours and terrain' },
 ];
 
 // Website-style grain gradient behind the side panels. Deep forest in dark, pale sage in light.
@@ -839,6 +839,8 @@ function ShortlistWorkspace({ profile, workspaces, workspace, onWorkspaceChange 
 function MapPanel({ workspaceId, contextLayers, constraintLayers = [], constraintsOn = {}, sites, selected, onSelect, hoveredId, onHover, mapConfig, layerVisibility, inspectorOpen, basemap }) {
   const basemapRef = useRef(basemap);
   basemapRef.current = basemap;
+  const basemapLayerIdsRef = useRef(new Set());
+  const appliedBasemapRef = useRef(basemap);
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
@@ -905,24 +907,15 @@ function MapPanel({ workspaceId, contextLayers, constraintLayers = [], constrain
       transformRequest: url => (url.startsWith(`${window.location.origin}/api/`) && currentSession?.access_token
         ? { url, headers: { Authorization: `Bearer ${currentSession.access_token}` } }
         : { url }),
-      style: {
-        version: 8,
-        sources: {
-          osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 19, attribution: '© OpenStreetMap contributors' },
-          topo: { type: 'raster', tiles: ['https://a.tile.opentopomap.org/{z}/{x}/{y}.png', 'https://b.tile.opentopomap.org/{z}/{x}/{y}.png', 'https://c.tile.opentopomap.org/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 17, attribution: 'Map style © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA), data © OpenStreetMap contributors' },
-        },
-        // Both basemap layers always exist; the chosen one is visible and the other hidden (see applyBasemap)
-        layers: [
-          { id: 'basemap-osm', type: 'raster', source: 'osm', layout: { visibility: BASEMAPS[basemapRef.current].source === 'osm' ? 'visible' : 'none' }, paint: BASEMAPS[basemapRef.current].paint },
-          { id: 'basemap-topo', type: 'raster', source: 'topo', layout: { visibility: BASEMAPS[basemapRef.current].source === 'topo' ? 'visible' : 'none' }, paint: BASEMAPS.topo.paint },
-        ],
-      },
+      style: BASEMAPS[basemapRef.current].style,
     });
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.on('load', () => {
+      // Everything in the style before this point belongs to the basemap; our layers are added below it
+      basemapLayerIdsRef.current = new Set(map.getStyle().layers.map(layer => layer.id));
       const config = configRef.current;
       // Tiles come from this app (same origin) with the user's token; see transformRequest
       const tileUrl = role => `${window.location.origin}/api/workspaces/${workspaceId}/tiles/${role}/{z}/{x}/{y}`;
@@ -1084,12 +1077,23 @@ function MapPanel({ workspaceId, contextLayers, constraintLayers = [], constrain
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    // Swap the basemap style but carry our own sources and layers (sites, parcels, constraints) across
     const applyBasemap = () => {
-      const { source, paint } = BASEMAPS[basemap];
-      ['osm', 'topo'].forEach(key => { if (map.getLayer(`basemap-${key}`)) map.setLayoutProperty(`basemap-${key}`, 'visibility', key === source ? 'visible' : 'none'); });
-      Object.entries(paint).forEach(([property, value]) => map.setPaintProperty(`basemap-${source}`, property, value));
+      if (appliedBasemapRef.current === basemap) return;
+      appliedBasemapRef.current = basemap;
+      map.setStyle(BASEMAPS[basemap].style, {
+        transformStyle: (previous, next) => {
+          if (!previous) return next;
+          const oldBase = basemapLayerIdsRef.current;
+          const baseSources = new Set(Object.keys(next.sources));
+          basemapLayerIdsRef.current = new Set(next.layers.map(layer => layer.id));
+          const ours = previous.layers.filter(layer => !oldBase.has(layer.id));
+          const ourSources = Object.fromEntries(Object.entries(previous.sources).filter(([id]) => !baseSources.has(id) && ours.some(layer => layer.source === id)));
+          return { ...next, sources: { ...next.sources, ...ourSources }, layers: [...next.layers, ...ours] };
+        },
+      });
     };
-    if (readyRef.current) applyBasemap(); else map.once('load', applyBasemap);
+    if (readyRef.current) applyBasemap(); else map.once('load', () => { appliedBasemapRef.current = basemapRef.current; applyBasemap(); });
   }, [basemap]);
   useEffect(() => {
     const map = mapRef.current;

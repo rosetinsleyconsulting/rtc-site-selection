@@ -17,11 +17,11 @@ app.locals.db = db;
 app.set('trust proxy', true);
 
 // Security headers. The content policy lists every outside origin the client uses: Supabase (auth),
-// Google Fonts, and the two basemap tile servers. Vite's dev server injects inline scripts, so the
-// policy only applies in production.
+// Google Fonts, and OpenFreeMap (basemap styles, vector tiles, sprites and label glyphs all come from
+// tiles.openfreemap.org). Vite's dev server injects inline scripts, so the policy only applies in production.
 const isProduction = process.env.NODE_ENV === 'production';
 const supabaseOrigin = process.env.SUPABASE_URL ? new URL(process.env.SUPABASE_URL).origin : null;
-const basemapOrigins = ['https://tile.openstreetmap.org', 'https://*.tile.opentopomap.org'];
+const basemapOrigins = ['https://tiles.openfreemap.org'];
 app.use(helmet({
   contentSecurityPolicy: isProduction ? {
     directives: {
@@ -39,8 +39,7 @@ app.use(helmet({
       formAction: ["'self'"],
     },
   } : false,
-  // Helmet defaults to no-referrer, and OSM's tile servers return 403 to requests without a Referer.
-  // This sends only the origin cross-site, never the path.
+  // Sends only the origin cross-site, never the path (kept from the OSM tile days; harmless for OpenFreeMap).
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 

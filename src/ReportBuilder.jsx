@@ -10,6 +10,8 @@ import { CHECK_STATUS, assessLayer, extendBounds, mapFeatures, metres, summarise
 // mode only; with real data the map colours by result instead). Hex values match the --teal/--rye/
 // --slate-blue/--forest/--moss/--rose tokens in index.css, since maplibre paint can't read CSS variables.
 const SECTION_COLORS = { env: '#638E83', hist: '#B6955B', transport: '#748894', lr: '#454E3A', planning: '#6F8443', comps: '#C58F84' };
+const REPORT_BASEMAP = 'https://tiles.openfreemap.org/styles/positron';
+const BASEMAP_CREDIT = 'Basemap: OpenFreeMap, © OpenMapTiles, data © OpenStreetMap contributors';
 
 // Destination-point circle approximation (equirectangular, fine at this scale), no turf dependency needed
 // for a visual buffer ring. Returns a GeoJSON Polygon in [lon, lat] pairs.
@@ -302,14 +304,9 @@ function ReportMap({ site, section, boundary }) {
       // Without this, WebGL clears its buffer right after each frame, so print/PDF capture
       // (this page's window.print() and Playwright's later page.pdf()) gets a blank canvas.
       preserveDrawingBuffer: true,
-      style: {
-        version: 8,
-        // Label glyphs (Noto Sans, SIL OFL) from OpenFreeMap; only used for names and ring distances on this map
-        glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
-        sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 19, attribution: '© OpenStreetMap contributors' } },
-        // Basemap knocked back so the constraint colours carry the map
-        layers: [{ id: 'basemap-osm', type: 'raster', source: 'osm', paint: { 'raster-saturation': -0.85, 'raster-opacity': 0.75 } }],
-      },
+      // OpenFreeMap Positron: a pale vector basemap, licensed for commercial use and print, so the
+      // constraint colours carry the map. Its glyphs (Noto Sans) also draw our names and ring distances.
+      style: REPORT_BASEMAP,
     });
     mapRef.current = map;
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
@@ -395,7 +392,7 @@ function ReportMap({ site, section, boundary }) {
             {circles.map(circle => <li key={circle.id}><i style={{ background: circle.color }}/>{circle.layerLabel}: within {circle.value.toLocaleString('en-GB')} {circle.unit === 'min' ? 'min drive (approx.)' : 'm'}</li>)}
           </ul>}
       {/* The on-map attribution is a button, which prints as one; print shows this line instead */}
-      <p className="rb-map-attribution">Basemap © OpenStreetMap contributors</p>
+      <p className="rb-map-attribution">{BASEMAP_CREDIT}</p>
     </figcaption>
   </figure>;
 }
@@ -443,7 +440,7 @@ function ReportSources({ sections }) {
         {layers[0].check.data_as_at && <small> (as at {formatAdminDate(layers[0].check.data_as_at)})</small>}
       </li>)}
     </ul>
-    <p>Basemap © OpenStreetMap contributors.{used.some(layer => layer.check.is_test_data) ? ' Licence and attribution statements for each dataset to be confirmed against the Data Register before this report goes to a client.' : ''}</p>
+    <p>{BASEMAP_CREDIT}.{used.some(layer => layer.check.is_test_data) ? ' Licence and attribution statements for each dataset to be confirmed against the Data Register before this report goes to a client.' : ''}</p>
   </section>;
 }
 

@@ -840,7 +840,6 @@ select.map-pill option { background: var(--paper); color: var(--ink); }
 .basemap-swatch.is-light { background: linear-gradient(135deg, #f4f4f2 0 45%, #d8d8d5 45% 52%, #ececea 52%); }
 .basemap-swatch.is-dark { background: linear-gradient(135deg, #2a2b2c 0 45%, #4a4b4d 45% 52%, #333436 52%); }
 .basemap-swatch.is-streets { background: linear-gradient(135deg, #f2efe9 0 40%, #f7d58a 40% 47%, #cfe6c0 47% 70%, #aad3df 70%); }
-.basemap-swatch.is-topo { background: repeating-radial-gradient(circle at 70% 70%, #e9e4cf 0 4px, #c9b98f 4px 5px); }
 .basemap-choice-text { display: grid; gap: 2px; color: var(--ink); font: 600 12.5px/1.2 var(--font-ui); }
 .basemap-choice-text small { color: var(--muted); font-weight: 500; font-size: 11px; }
 .map-panel.basemap-dark .map-canvas { background: #222324; }

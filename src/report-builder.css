@@ -77,7 +77,12 @@
 
 /* The preview is the printed page: 180 mm wide on screen as on paper, so wrapping, column widths and map
    framing on screen are what prints. It shrinks to fit only when the column is narrower than A4. */
-.rb-online { width: 180mm; max-width: 100%; margin: 0 auto; background: var(--cream); color: var(--charcoal); border-radius: 5px; box-shadow: var(--shadow-sm); padding: 14mm 15mm; box-sizing: border-box; }
+.rb-online { position: relative; width: 180mm; max-width: 100%; margin: 0 auto; background: var(--cream); color: var(--charcoal); border-radius: 5px; box-shadow: var(--shadow-sm); padding: 14mm 15mm; box-sizing: border-box; }
+/* Test data or no check: a report that must not reach a client carries a watermark on screen and on paper */
+.rb-print-trigger.is-draft { border-color: rgba(179,58,58,.35); color: #8E2B2B; }
+.rb-not-ready { margin: 0 0 10px; padding: 8px 11px; border-radius: 5px; background: rgba(179,58,58,.08); color: #8E2B2B; font: 500 12px/1.45 var(--font-ui); }
+.rb-not-ready strong { font-weight: 700; }
+.rb-online[data-watermark]::before { content: attr(data-watermark); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 5; color: rgba(179,58,58,.13); font: 800 54px/1 var(--font-ui); letter-spacing: .08em; text-transform: uppercase; transform: rotate(-28deg); white-space: nowrap; }
 
 /* Report header: masthead, headline, then the document details as one ruled row of labelled columns */
 .rb-report-head { margin-bottom: 18px; }
@@ -197,7 +202,9 @@
    section often won't fit a page, and forcing it would leave pages nearly empty. */
 @media print {
   @page { size: A4; margin: 15mm 15mm 18mm; @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 8pt Montserrat, sans-serif; color: #74786D; } }
-  .rb-rail, .adm-account, .rb-head, .rb-build-col, .rb-preview-toolbar { display: none !important; }
+  .rb-rail, .adm-account, .rb-head, .rb-build-col, .rb-preview-toolbar, .rb-not-ready { display: none !important; }
+  /* Fixed elements repeat on every printed page in Chrome, so the draft watermark marks each page */
+  .rb-online[data-watermark]::before { position: fixed; inset: 0; color: rgba(179,58,58,.16); font-size: 72px; }
   .rb-shell { display: block !important; height: auto !important; }
   .rb-main { height: auto !important; overflow: visible !important; padding: 0 !important; }
   .rb-body { display: block !important; height: auto !important; }

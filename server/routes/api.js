@@ -18,6 +18,8 @@ const isUniqueViolation = error => (error?.code || error?.cause?.code) === '2350
 // Placeholder price (3 Nov 2026), not yet agreed. One place to change it; requests store the price they were made at.
 const APPRAISAL_OFFER = { pricePence: 20000, vat: 'plus VAT' };
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+// Which portal this server is. Only the dev .env sets SITE_PORTAL=dev; anything else counts as live.
+const SITE_PORTAL = process.env.SITE_PORTAL === 'dev' ? 'dev' : 'live';
 
 const DEFAULT_MAP_CONFIG = {
   contextLayerDefaultOn: true,
@@ -526,8 +528,9 @@ router.get('/admin/appraisal-requests/:requestId/site-check', requirePlatformAdm
   if (!site) return res.status(404).json({ error: 'Request not found' });
   try {
     const result = await spatialPool.query(
-      'SELECT meta.site_check($1, $2, $3, $4, $5) AS check',
-      [site.workspace_id, site.site_id, toNullableNumber(site.lon), toNullableNumber(site.lat), SITE_CHECK_MAX_M],
+      // Dev and live share the spatial database; the portal keeps their boundaries apart (sites.id clash)
+      'SELECT meta.site_check($1, $2, $3, $4, $5, $6) AS check',
+      [SITE_PORTAL, site.workspace_id, site.site_id, toNullableNumber(site.lon), toNullableNumber(site.lat), SITE_CHECK_MAX_M],
     );
     res.json({ siteCheck: result.rows[0].check });
   } catch (error) {

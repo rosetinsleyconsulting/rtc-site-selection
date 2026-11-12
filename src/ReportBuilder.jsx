@@ -495,11 +495,24 @@ function ReportSection({ section, site, siteCheck }) {
   </section>;
 }
 
-function ReportPreview({ meta, site, sections, siteCheck }) {
+// A report may only leave RTC when every included layer is cleared data and the check actually ran.
+// Anything else prints as a watermarked internal draft.
+export function clientReadiness(sections, siteCheck) {
+  if (!siteCheck) return { ready: false, reason: 'The constraint check hasn’t run, so the findings are placeholders.' };
+  const testLayers = sections.flatMap(section => section.layers).filter(layer => layer.included && layer.check?.is_test_data);
+  if (testLayers.length) {
+    const names = testLayers.map(layer => layer.label);
+    const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
+    return { ready: false, reason: `${testLayers.length} included ${testLayers.length === 1 ? 'layer is' : 'layers are'} test data, not yet licence-checked: ${shown}.` };
+  }
+  return { ready: true, reason: '' };
+}
+
+function ReportPreview({ meta, site, sections, siteCheck, draft }) {
   const includedSections = sections.filter(section => section.layers.some(layer => layer.included));
   const reportDate = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-  return <div className="rb-preview">
-    <article className="rb-online">
+  return <div className={`rb-preview${draft ? ' is-draft' : ''}`}>
+    <article className="rb-online" data-watermark={draft ? 'Draft · not for client' : undefined}>
       <header className="rb-report-head">
         <div className="rb-report-masthead">
           <span className="rtc-logo is-small"><span className="rtc-logo-name">ROSE TINSLEY</span><span className="rtc-logo-descriptor">C O N S U L T I N G</span></span>
@@ -601,6 +614,7 @@ function ReportBuilder({ request, mock, siteCheck, siteCheckError, onRetry, anal
   const activeSection = sections.find(section => section.key === activeKey);
   const meta = { siteName: request.site_name, workspaceName: request.workspace_name, borough: request.borough, reference: reportReference(request), analyst: preparedByName(analyst) };
   // Nav shows where the findings are, not how many boxes are ticked
+  const readiness = clientReadiness(sections, siteCheck);
   const navFindings = section => summarise(section.layers.filter(layer => layer.included).map(layer => assessLayer(layer, basis)));
 
   return <div className="app-shell adm-shell rb-shell" data-theme={theme}>
@@ -667,9 +681,12 @@ function ReportBuilder({ request, mock, siteCheck, siteCheckError, onRetry, anal
             <span className="rb-preview-label"><Globe size={13}/>Preview at A4 width</span>
             <span className="rb-draft-status" aria-live="polite">{savedAt ? `Draft saved in this browser, ${new Date(savedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : 'Not saved yet'}</span>
             {savedAt && <button type="button" className="rb-text-button" onClick={discardDraft}><RotateCcw size={12}/>Discard draft</button>}
-            <button type="button" className="rb-print-trigger" onClick={printReport}><Printer size={13}/>Print</button>
+            <button type="button" className={`rb-print-trigger${readiness.ready ? '' : ' is-draft'}`} onClick={printReport} title={readiness.ready ? 'Print or save as PDF' : `Prints with a DRAFT watermark. ${readiness.reason}`}>
+              <Printer size={13}/>{readiness.ready ? 'Print' : 'Print draft'}
+            </button>
           </div>
-          <ReportPreview meta={meta} site={request} sections={sections} siteCheck={siteCheck}/>
+          {!readiness.ready && <p className="rb-not-ready" role="status"><strong>Not ready for a client.</strong> {readiness.reason} It prints with a draft watermark.</p>}
+          <ReportPreview meta={meta} site={request} sections={sections} siteCheck={siteCheck} draft={!readiness.ready}/>
         </div>
       </div>
     </main>
